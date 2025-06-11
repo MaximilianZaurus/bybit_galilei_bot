@@ -1,14 +1,16 @@
 services:
-  - type: worker
-    name: liquidation-bot
+  - type: web
+    name: bybit-liquidation-webhook
     env: python
-    plan: free
-    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: python liquidation_alert_bot.py
-    autoDeploy: true
-    region: oregon
+    startCommand: uvicorn liquidation_alert_bot:app --host 0.0.0.0 --port 10000
     envVars:
+      - key: API_TOKEN
+        value: 8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA
+      - key: WEBHOOK_SECRET
+        value: secret123
+      - key: WEBHOOK_URL
+        value: https://bybit-liquidations.onrender.com/webhook/secret123
       - key: TELEGRAM_TOKEN
         value: 8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA
       - key: TELEGRAM_CHAT_ID
