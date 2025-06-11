@@ -1,92 +1,82 @@
 import asyncio
-import json
 import logging
-import requests
+import aiohttp
 import websockets
+import json
+from datetime import datetime
+
+# Настройки
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+
+# API V5
+FUNDING_URL = "https://api.bybit.com/v5/market/funding/history"
+OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
+WS_URL = "wss://stream.bybit.com/v5/public/linear"
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-
-FUNDING_RATE_URL = "https://api.bybit.com/public/linear/funding/prev-funding-rate"
-OPEN_INTEREST_URL = "https://api.bybit.com/public/linear/open-interest"
-WS_URL = "wss://stream.bybit.com/realtime_public"
-
-
-def get_funding_rate(symbol):
+async def fetch_funding_rate(session, symbol):
     try:
-        params = {"symbol": symbol}
-        resp = requests.get(FUNDING_RATE_URL, params=params)
-        logging.info(f"Funding rate HTTP status for {symbol}: {resp.status_code}")
-        if resp.status_code != 200:
-            logging.error(f"Funding rate response for {symbol}: {resp.text}")
-            return None
-        data = resp.json()
-        if data.get("ret_code") == 0:
-            rate = float(data["result"]["prev_funding_rate"])
-            logging.info(f"Funding rate for {symbol}: {rate}")
+        params = {"category": "linear", "symbol": symbol, "limit": 1}
+        async with session.get(FUNDING_URL, params=params) as response:
+            data = await response.json()
+            rate = float(data['result']['list'][0]['fundingRate'])
             return rate
-        else:
-            logging.error(f"Funding rate error for {symbol}: {data.get('ret_msg')}")
     except Exception as e:
-        logging.error(f"Funding rate exception for {symbol}: {e}")
-    return None
+        logging.error(f"Funding rate error {symbol}: {e}")
+        return None
 
-
-def get_open_interest(symbol):
+async def fetch_open_interest(session, symbol):
     try:
-        params = {"symbol": symbol}
-        resp = requests.get(OPEN_INTEREST_URL, params=params)
-        logging.info(f"Open interest HTTP status for {symbol}: {resp.status_code}")
-        if resp.status_code != 200:
-            logging.error(f"Open interest response for {symbol}: {resp.text}")
-            return None
-        data = resp.json()
-        if data.get("ret_code") == 0:
-            oi = float(data["result"]["open_interest"])
-            logging.info(f"Open interest for {symbol}: {oi}")
-            return oi
-        else:
-            logging.error(f"Open interest error for {symbol}: {data.get('ret_msg')}")
+        params = {"category": "linear", "symbol": symbol, "intervalTime": 60}
+        async with session.get(OPEN_INTEREST_URL, params=params) as response:
+            data = await response.json()
+            value = float(data['result']['list'][0]['openInterest'])
+            return value
     except Exception as e:
-        logging.error(f"Open interest exception for {symbol}: {e}")
-    return None
+        logging.error(f"Open interest error {symbol}: {e}")
+        return None
 
+async def send_telegram_message(text):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    async with aiohttp.ClientSession() as session:
+        await session.post(url, data={"chat_id": CHAT_ID, "text": text})
+
+async def monitor_funding_and_interest():
+    async with aiohttp.ClientSession() as session:
+        for symbol in SYMBOLS:
+            rate = await fetch_funding_rate(session, symbol)
+            oi = await fetch_open_interest(session, symbol)
+            if rate is not None and oi is not None:
+                text = f"\n📊 {symbol}\nFunding Rate: {rate:.6f}\nOpen Interest: {oi:,.2f}"
+                await send_telegram_message(text)
 
 async def listen_liquidations():
     async with websockets.connect(WS_URL) as ws:
-        # Подписка на ликвидации по символам
-        subscribe_msg = {
+        sub_msg = {
             "op": "subscribe",
-            "args": [f"liquidation.{sym}" for sym in SYMBOLS]
+            "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
         }
-        await ws.send(json.dumps(subscribe_msg))
-        logging.info(f"Subscribed to liquidation channels for: {', '.join(SYMBOLS)}")
+        await ws.send(json.dumps(sub_msg))
 
         while True:
-            try:
-                msg = await ws.recv()
-                data = json.loads(msg)
-                # Проверяем, есть ли данные по ликвидациям
-                if "data" in data and "topic" in data:
-                    if data["topic"].startswith("liquidation."):
-                        logging.info(f"Liquidation data: {data['data']}")
-            except Exception as e:
-                logging.error(f"WebSocket error: {e}")
-                break
-
+            message = await ws.recv()
+            data = json.loads(message)
+            if data.get("topic", "").startswith("liquidation"):
+                for entry in data.get("data", []):
+                    symbol = entry.get("symbol")
+                    price = entry.get("price")
+                    side = entry.get("side")
+                    size = entry.get("qty")
+                    text = f"💥 Liquidation on {symbol}: {side} {size} at {price}"
+                    await send_telegram_message(text)
 
 async def main():
     logging.info("Bot started")
-
-    # Получаем и логируем funding rate и open interest для всех символов
-    for symbol in SYMBOLS:
-        get_funding_rate(symbol)
-        get_open_interest(symbol)
-
-    # Запускаем WebSocket слушатель ликвидаций
+    await monitor_funding_and_interest()
     await listen_liquidations()
-
 
 if __name__ == "__main__":
     asyncio.run(main())
