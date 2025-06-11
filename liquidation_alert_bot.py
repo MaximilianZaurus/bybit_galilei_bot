@@ -3,21 +3,31 @@ import aiohttp
 import logging
 from aiogram import Bot, Dispatcher, types
 from aiogram.enums import ParseMode
-from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.types import Message
+from fastapi import FastAPI
+import uvicorn
+from threading import Thread
+import os
 
-API_TOKEN = '8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA'
+API_TOKEN = os.getenv("API_TOKEN")
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
-
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
 OPEN_INTEREST_THRESHOLD = 0.03  # 3%
+daily_open_interest = {}
 
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s")
 
+# Telegram bot
 bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher(storage=MemoryStorage())
 
-daily_open_interest = {}
+# FastAPI health check
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return {"status": "ok"}
 
 async def fetch_open_interest(session, symbol):
     try:
@@ -29,52 +39,45 @@ async def fetch_open_interest(session, symbol):
         }
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
             data = await response.json()
-            logging.info(f"Open interest raw response for {symbol}: {data}")
             if data.get("retCode") == 0 and data["result"]["list"]:
-                latest = data["result"]["list"][-1]
-                value = float(latest["openInterest"])
-                return value
-            else:
-                logging.error(f"Open interest response error for {symbol}: {data}")
+                return float(data["result"]["list"][-1]["openInterest"])
     except Exception as e:
-        logging.error(f"Open interest error {symbol}: {e}")
+        logging.error(f"{symbol} error: {e}")
     return None
 
 async def check_open_interest_changes(chat_id):
     async with aiohttp.ClientSession() as session:
         for symbol in SYMBOLS:
             if symbol not in daily_open_interest:
-                oi = await fetch_open_interest(session, symbol)
-                if oi:
-                    daily_open_interest[symbol] = oi
-                    logging.info(f"Set daily open interest for {symbol}: {oi}")
+                value = await fetch_open_interest(session, symbol)
+                if value:
+                    daily_open_interest[symbol] = value
 
         while True:
             for symbol in SYMBOLS:
-                current_oi = await fetch_open_interest(session, symbol)
-                if current_oi is None:
+                current = await fetch_open_interest(session, symbol)
+                if current is None:
                     continue
-                base_oi = daily_open_interest.get(symbol, current_oi)
-                change = abs(current_oi - base_oi) / base_oi
-                logging.info(f"{symbol}: base {base_oi}, current {current_oi}, change {change:.2%}")
-
+                base = daily_open_interest.get(symbol, current)
+                change = abs(current - base) / base
                 if change > OPEN_INTEREST_THRESHOLD:
-                    msg = (f"⚠️ Open Interest for <b>{symbol}</b> changed by <b>{change*100:.2f}%</b>!\n"
-                           f"Base: {base_oi:.2f}\nCurrent: {current_oi:.2f}")
+                    msg = (f"⚠️ Open Interest for {symbol} changed by {change*100:.2f}%!\n"
+                           f"Base: {base}\nCurrent: {current}")
                     await bot.send_message(chat_id, msg)
-                    daily_open_interest[symbol] = current_oi
-
+                    daily_open_interest[symbol] = current
             await asyncio.sleep(60)
 
-@dp.message()
-async def handle_start(message: Message):
-    if message.text == "/start":
-        await message.answer("Привет! Я бот для отслеживания Open Interest на Bybit.")
-        asyncio.create_task(check_open_interest_changes(message.chat.id))
+@dp.message(commands=["start"])
+async def start_handler(message: Message):
+    await message.answer("👋 Бот запущен! Буду следить за Open Interest.")
+    asyncio.create_task(check_open_interest_changes(message.chat.id))
 
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await dp.start_polling(bot)
+def run_bot():
+    asyncio.run(dp.start_polling(bot))
+
+def run_api():
+    uvicorn.run(app, host="0.0.0.0", port=10000)
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    Thread(target=run_bot).start()
+    run_api()
