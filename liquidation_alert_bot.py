@@ -1,25 +1,22 @@
+import os
 import asyncio
 import logging
-import os
+from fastapi import FastAPI, Request
 from aiogram import Bot, Dispatcher, F
 from aiogram.enums import ParseMode
 from aiogram.client.default import DefaultBotProperties
-from aiogram.types import Message
+from aiogram.types import Update, Message
 from aiohttp import ClientSession
-from fastapi import FastAPI, Request
-from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+from aiogram.webhook.aiohttp_server import setup_application  # только setup нужен
 
 API_TOKEN = os.getenv("API_TOKEN")
-WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET")  # любой секрет, например, "secret123"
+WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret123")
 WEBHOOK_PATH = f"/webhook/{WEBHOOK_SECRET}"
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")  # https://your-app.onrender.com/webhook/secret123
 
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT", "XMRUSDT"]
 OPEN_INTEREST_THRESHOLD = 0.03
-
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
 
 bot = Bot(
     token=API_TOKEN,
@@ -28,6 +25,8 @@ bot = Bot(
 dp = Dispatcher()
 app = FastAPI()
 
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 daily_open_interest = {}
 
 async def fetch_open_interest(session: ClientSession, symbol: str) -> float | None:
@@ -77,14 +76,22 @@ async def cmd_start(message: Message):
     await message.answer("🟢 Бот запущен. Мониторим Open Interest на Bybit.")
     asyncio.create_task(monitor_open_interest(message.chat.id))
 
-# Webhook router setup
+@app.post(WEBHOOK_PATH)
+async def handle_webhook(request: Request):
+    try:
+        data = await request.json()
+        update = Update.model_validate(data)
+        await dp.feed_update(bot, update)
+    except Exception as e:
+        logger.error(f"Ошибка при обработке апдейта: {e}")
+    return {"ok": True}
+
 @app.on_event("startup")
 async def on_startup():
     await bot.set_webhook(WEBHOOK_URL)
+    logger.info("Webhook установлен")
 
 @app.on_event("shutdown")
 async def on_shutdown():
     await bot.delete_webhook()
-
-SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path=WEBHOOK_PATH)
-setup_application(app, dp, bot=bot)
+    logger.info("Webhook удалён")
