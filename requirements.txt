@@ -3,5 +3,5 @@ requests
 websockets
 websocket-client
 python-telegram-bot==13.15
-aiogram
+aiogram v3
 aiohttp
