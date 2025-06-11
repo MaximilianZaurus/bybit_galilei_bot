@@ -35,7 +35,8 @@ async def fetch_open_interest(session, symbol):
         params = {
             "category": "linear",
             "symbol": symbol,
-            "IntervalTime": "60"  # Обязательно с большой буквы 'T'
+            "IntervalTime": "60",  # обязательно строка и с заглавной T
+            "limit": 1
         }
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
             data = await response.json()
