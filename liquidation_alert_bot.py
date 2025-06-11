@@ -22,23 +22,27 @@ bot = Bot(token=TELEGRAM_TOKEN)
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
 
-# URL для получения funding rate и open interest с обязательным параметром intervalTime для open interest
-FUNDING_RATE_URL = "https://api.bybit.com/derivatives/v3/public/funding-rate"
-OPEN_INTEREST_URL = "https://api.bybit.com/derivatives/v3/public/open-interest"
+# Исправленные URL API с /list в конце
+FUNDING_RATE_URL = "https://api.bybit.com/derivatives/v3/public/funding-rate/list"
+OPEN_INTEREST_URL = "https://api.bybit.com/derivatives/v3/public/open-interest/list"
 
-# Интервал для open interest (нужен параметр, допустим, 60 секунд)
-OPEN_INTEREST_INTERVAL = 60
+# Для open interest нужен параметр interval, например "1" (минута)
+OPEN_INTEREST_INTERVAL = "1"
 
 def get_funding_rate(symbol):
     try:
         params = {"symbol": symbol}
         response = requests.get(FUNDING_RATE_URL, params=params)
+        logging.info(f"Funding rate HTTP status for {symbol}: {response.status_code}")
+        logging.info(f"Funding rate response for {symbol}: {response.text}")
+        response.raise_for_status()
         data = response.json()
-        logging.info(f"Funding rate raw response for {symbol}: {json.dumps(data)}")
         if data.get("retCode") == 0:
             lst = data.get("result", {}).get("list", [])
             if lst:
                 return float(lst[0].get("fundingRate", 0))
+            else:
+                logging.warning(f"Funding rate no data for {symbol}")
         else:
             logging.error(f"Funding rate error {symbol}: {data.get('retMsg')}")
     except Exception as e:
@@ -49,18 +53,19 @@ def get_open_interest(symbol):
     try:
         params = {
             "symbol": symbol,
-            "intervalTime": OPEN_INTEREST_INTERVAL  # обязательный параметр для API
+            "interval": OPEN_INTEREST_INTERVAL  # строка "1"
         }
         response = requests.get(OPEN_INTEREST_URL, params=params)
+        logging.info(f"Open interest HTTP status for {symbol}: {response.status_code}")
+        logging.info(f"Open interest response for {symbol}: {response.text}")
+        response.raise_for_status()
         data = response.json()
-        logging.info(f"Open interest raw response for {symbol}: {json.dumps(data)}")
         if data.get("retCode") == 0:
             lst = data.get("result", {}).get("list", [])
             if lst:
-                # В зависимости от формата API, берем нужное поле, например openInterest
                 return float(lst[0].get("openInterest", 0))
             else:
-                logging.error(f"Open interest no data {symbol}: {data}")
+                logging.warning(f"Open interest no data for {symbol}")
         else:
             logging.error(f"Open interest error {symbol}: {data.get('retMsg')}")
     except Exception as e:
@@ -76,7 +81,7 @@ def send_telegram_message(text):
 def on_message(ws, message):
     try:
         data = json.loads(message)
-        # Пример обработки входящего сообщения
+        # Пример обработки входящего сообщения с ликвидациями
         if "data" in data:
             for item in data["data"]:
                 symbol = item.get("symbol")
@@ -97,13 +102,12 @@ def on_close(ws, close_status_code, close_msg):
 
 def on_open(ws):
     logging.info("WebSocket connection opened")
-    # Подписываемся на каналы ликвидаций
     params = {
         "op": "subscribe",
         "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
     }
     ws.send(json.dumps(params))
-    logging.info(f"Subscribed to WS: {params['args']}")
+    logging.info(f"Subscribed to WS channels: {params['args']}")
 
 def run_websocket():
     ws_url = "wss://stream.bybit.com/realtime_public"
@@ -128,6 +132,5 @@ def periodic_fetch():
 
 if __name__ == "__main__":
     logging.info("Bot started")
-    # Запускаем в потоках WebSocket и периодический опрос API
     threading.Thread(target=run_websocket, daemon=True).start()
     periodic_fetch()
