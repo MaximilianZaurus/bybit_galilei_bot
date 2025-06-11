@@ -1,122 +1,101 @@
-import os
-import requests
 import asyncio
 import logging
+import os
+import aiohttp
 import json
 import websockets
 from datetime import datetime
 
-TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID")
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
 BYBIT_WS_URL = "wss://stream.bybit.com/v5/public/linear"
+BYBIT_HTTP_URL = "https://api.bybit.com"
 
-logging.basicConfig(level=logging.INFO)
-
-
-def send_telegram_message(message):
+async def send_telegram_message(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
+    payload = {"chat_id": TELEGRAM_CHAT_ID, "text": message}
     try:
-        response = requests.post(url, json=payload)
-        if response.status_code != 200:
-            logging.error(f"Telegram error: {response.text}")
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=payload) as resp:
+                if resp.status != 200:
+                    logger.error(f"Telegram error: {await resp.text()}")
     except Exception as e:
-        logging.error(f"Telegram exception: {e}")
+        logger.error(f"Telegram exception: {e}")
 
-
-def get_funding_rate(symbol):
-    url = f"https://api.bybit.com/v5/market/funding/history?category=linear&symbol={symbol}&limit=1"
+async def fetch_funding_rate(symbol):
     try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code != 200:
-            logging.error(f"Funding rate HTTP error {symbol}: {resp.status_code} {resp.text}")
-            return None
-
-        logging.info(f"Funding rate raw response for {symbol}: {resp.text}")
-        data = resp.json()
-
-        if data.get("retCode") != 0 or not data["result"]["list"]:
-            logging.error(f"Funding rate no data {symbol}: {data}")
-            return None
-
-        return float(data["result"]["list"][0]["fundingRate"])
+        url = f"{BYBIT_HTTP_URL}/v5/market/funding-rate?symbol={symbol}&category=linear"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                raw = await resp.text()
+                logger.info(f"Funding rate raw response for {symbol}: {raw}")
+                data = json.loads(raw)
+                rate = float(data["result"]["list"][0]["fundingRate"])
+                return rate
     except Exception as e:
-        logging.error(f"Funding rate exception {symbol}: {e}")
+        logger.error(f"Funding rate error {symbol}: {e}")
         return None
 
-
-def get_open_interest(symbol):
-    url = f"https://api.bybit.com/v5/market/open-interest?category=linear&symbol={symbol}&intervalTime=5"
+async def fetch_open_interest(symbol):
     try:
-        resp = requests.get(url, timeout=10)
-        if resp.status_code != 200:
-            logging.error(f"Open interest HTTP error {symbol}: {resp.status_code} {resp.text}")
-            return None
-
-        logging.info(f"Open interest raw response for {symbol}: {resp.text}")
-        data = resp.json()
-
-        if data.get("retCode") != 0 or not data["result"]["list"]:
-            logging.error(f"Open interest no data {symbol}: {data}")
-            return None
-
-        return float(data["result"]["list"][0]["openInterest"])
+        url = f"{BYBIT_HTTP_URL}/v5/market/open-interest?category=linear&symbol={symbol}&intervalTime=5min&limit=1"
+        async with aiohttp.ClientSession() as session:
+            async with session.get(url) as resp:
+                raw = await resp.text()
+                logger.info(f"Open interest raw response for {symbol}: {raw}")
+                data = json.loads(raw)
+                if not data["result"]["list"]:
+                    logger.error(f"Open interest no data {symbol}: {data}")
+                    return None
+                oi_value = float(data["result"]["list"][0]["openInterest"])
+                return oi_value
     except Exception as e:
-        logging.error(f"Open interest exception {symbol}: {e}")
+        logger.error(f"Open interest error {symbol}: {e}")
         return None
 
-
-async def websocket_listener():
-    topics = [f"liquidation.{symbol}" for symbol in SYMBOLS]
-    subscribe_msg = json.dumps({
-        "op": "subscribe",
-        "args": topics
-    })
-
-    try:
-        async with websockets.connect(BYBIT_WS_URL) as ws:
-            await ws.send(subscribe_msg)
-            logging.info(f"Subscribed to WS: {topics}")
-
-            while True:
-                message = await ws.recv()
-                data = json.loads(message)
-                if "data" in data:
-                    for item in data["data"]:
-                        symbol = item.get("symbol")
-                        side = item.get("side")
-                        price = item.get("price")
-                        size = item.get("qty")
-                        msg = f"💥 Liquidation Alert\nSymbol: {symbol}\nSide: {side}\nPrice: {price}\nSize: {size}"
-                        send_telegram_message(msg)
-    except Exception as e:
-        logging.error(f"WebSocket error: {e}")
-
-
-async def periodic_task():
+async def periodic_metrics():
     while True:
         for symbol in SYMBOLS:
-            fr = get_funding_rate(symbol)
-            oi = get_open_interest(symbol)
-            if fr is not None and oi is not None:
-                msg = f"📊 *{symbol}*\nFunding Rate: {fr:.6f}\nOpen Interest: {oi:.2f}"
-                send_telegram_message(msg)
-        await asyncio.sleep(60 * 30)  # каждые 30 минут
+            rate = await fetch_funding_rate(symbol)
+            oi = await fetch_open_interest(symbol)
+            if rate is not None and oi is not None:
+                message = f"🔄 {symbol}\nFunding Rate: {rate:.6f}\nOpen Interest: {oi:.2f}"
+                await send_telegram_message(message)
+        await asyncio.sleep(600)  # каждые 10 минут
 
+async def websocket_listener():
+    try:
+        async with websockets.connect(BYBIT_WS_URL) as ws:
+            topics = [f"liquidation.{s}" for s in SYMBOLS]
+            await ws.send(json.dumps({"op": "subscribe", "args": topics}))
+            logger.info(f"Subscribed to WS: {topics}")
+
+            while True:
+                msg = await ws.recv()
+                data = json.loads(msg)
+                if data.get("topic", "").startswith("liquidation."):
+                    symbol = data["topic"].split(".")[1]
+                    for event in data.get("data", []):
+                        side = event.get("side")
+                        price = event.get("price")
+                        qty = event.get("qty")
+                        message = (
+                            f"💥 Liquidation Alert\n{symbol}\nSide: {side}\nPrice: {price}\nQty: {qty}"
+                        )
+                        await send_telegram_message(message)
+    except Exception as e:
+        logger.error(f"WebSocket error: {e}")
 
 async def main():
+    logger.info("Bot started")
     listener_task = asyncio.create_task(websocket_listener())
-    periodic_task_ = asyncio.create_task(periodic_task())
+    periodic_task_ = asyncio.create_task(periodic_metrics())
     await asyncio.gather(listener_task, periodic_task_)
 
-
 if __name__ == "__main__":
-    logging.info("Bot started")
     asyncio.run(main())
-
