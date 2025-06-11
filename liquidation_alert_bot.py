@@ -1,41 +1,32 @@
 import asyncio
-import logging
 import aiohttp
-import websockets
-import json
-import os
+import logging
+from aiogram import Bot, Dispatcher, types
+from aiogram.utils import executor
 
-# Настройки
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")  # обязательно установи в env
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")      # обязательно установи в env
-
-FUNDING_URL = "https://api.bybit.com/v5/market/funding/history"
+API_TOKEN = 'ВАШ_ТОКЕН_ТЕЛЕГРАМ'
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
-WS_URL = "wss://stream.bybit.com/v5/public/linear"
+
+# Мониторим эти символы
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
+
+# Порог для уведомления (пример, можно менять)
+OPEN_INTEREST_THRESHOLD = 0.03  # 3% от дневного объёма (пример)
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
 
-async def fetch_funding_rate(session, symbol):
-    try:
-        params = {"category": "linear", "symbol": symbol, "limit": 1}
-        async with session.get(FUNDING_URL, params=params) as response:
-            data = await response.json()
-            if data.get("retCode") == 0 and data["result"]["list"]:
-                rate = float(data['result']['list'][0]['fundingRate'])
-                return rate
-            else:
-                logging.error(f"Funding rate response error for {symbol}: {data}")
-    except Exception as e:
-        logging.error(f"Funding rate error {symbol}: {e}")
-    return None
+bot = Bot(token=API_TOKEN)
+dp = Dispatcher(bot)
+
+# Словарь для хранения дневного объема (будем обновлять раз в сутки)
+daily_open_interest = {}
 
 async def fetch_open_interest(session, symbol):
     try:
         params = {
             "category": "linear",
             "symbol": symbol,
-            "IntervalTime": "60",  # обязательно строка и с заглавной T
+            "intervalTime": "60",  # ВАЖНО: именно так, строчными буквами
             "limit": 1
         }
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
@@ -51,49 +42,40 @@ async def fetch_open_interest(session, symbol):
         logging.error(f"Open interest error {symbol}: {e}")
     return None
 
-async def send_telegram_message(text):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+async def check_open_interest_changes(chat_id):
     async with aiohttp.ClientSession() as session:
-        try:
-            resp = await session.post(url, data={"chat_id": CHAT_ID, "text": text})
-            if resp.status != 200:
-                logging.error(f"Telegram send failed: {resp.status}")
-        except Exception as e:
-            logging.error(f"Telegram send exception: {e}")
-
-async def monitor_funding_and_interest():
-    async with aiohttp.ClientSession() as session:
+        # Инициализация дневного объема, если нет
         for symbol in SYMBOLS:
-            rate = await fetch_funding_rate(session, symbol)
-            oi = await fetch_open_interest(session, symbol)
-            if rate is not None and oi is not None:
-                text = f"\n📊 {symbol}\nFunding Rate: {rate:.6f}\nOpen Interest: {oi:,.2f}"
-                await send_telegram_message(text)
-
-async def listen_liquidations():
-    async with websockets.connect(WS_URL) as ws:
-        sub_msg = {
-            "op": "subscribe",
-            "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
-        }
-        await ws.send(json.dumps(sub_msg))
+            if symbol not in daily_open_interest:
+                oi = await fetch_open_interest(session, symbol)
+                if oi:
+                    daily_open_interest[symbol] = oi
+                    logging.info(f"Set daily open interest for {symbol}: {oi}")
 
         while True:
-            message = await ws.recv()
-            data = json.loads(message)
-            if data.get("topic", "").startswith("liquidation"):
-                for entry in data.get("data", []):
-                    symbol = entry.get("symbol")
-                    price = entry.get("price")
-                    side = entry.get("side")
-                    size = entry.get("qty")
-                    text = f"💥 Liquidation on {symbol}: {side} {size} at {price}"
-                    await send_telegram_message(text)
+            for symbol in SYMBOLS:
+                current_oi = await fetch_open_interest(session, symbol)
+                if current_oi is None:
+                    continue
+                base_oi = daily_open_interest.get(symbol, current_oi)
+                change = abs(current_oi - base_oi) / base_oi
+                logging.info(f"Symbol: {symbol}, base OI: {base_oi}, current OI: {current_oi}, change: {change:.4f}")
 
-async def main():
-    logging.info("Bot started")
-    await monitor_funding_and_interest()
-    await listen_liquidations()
+                if change > OPEN_INTEREST_THRESHOLD:
+                    msg = (f"⚠️ Open Interest for {symbol} changed by {change*100:.2f}%!\n"
+                           f"Base: {base_oi}\nCurrent: {current_oi}")
+                    await bot.send_message(chat_id, msg)
+                    # Обновляем базу после уведомления
+                    daily_open_interest[symbol] = current_oi
 
-if __name__ == "__main__":
-    asyncio.run(main())
+            await asyncio.sleep(60)  # Проверяем каждую минуту
+
+@dp.message_handler(commands=['start'])
+async def send_welcome(message: types.Message):
+    await message.answer("Привет! Я бот для отслеживания Open Interest на Bybit.\n"
+                         "Я буду присылать уведомления, если объем изменится более чем на 3% за час.")
+    # Запускаем задачу мониторинга
+    asyncio.create_task(check_open_interest_changes(message.chat.id))
+
+if __name__ == '__main__':
+    executor.start_polling(dp, skip_updates=True)
