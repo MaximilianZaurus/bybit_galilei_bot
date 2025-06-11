@@ -1,0 +1,15 @@
+services:
+  - type: worker
+    name: liquidation-bot
+    env: python
+    plan: free
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: python liquidation_alert_bot.py
+    autoDeploy: true
+    region: oregon  # Можно изменить на frankfurt, если ближе
+    envVars:
+      - key: TELEGRAM_TOKEN
+        value: 8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA
+      - key: TELEGRAM_CHAT_ID
+        value: "5309903897"
