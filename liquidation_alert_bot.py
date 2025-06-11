@@ -17,7 +17,7 @@ SYMBOLS = ["BTCUSDT", "AAVEUSDT", "ETHUSDT", "SOLUSDT", "XMRUSDT"]
 BYBIT_API_BASE = "https://api.bybit.com"
 HEADERS = {"Accept": "application/json"}
 
-# Порог объема ликвидаций для алерта (можно настроить)
+# Порог объема ликвидаций для алерта (настрой по желанию)
 LIQUIDATION_VOLUME_THRESHOLD = {
     "BTCUSDT": 5,     # в BTC
     "AAVEUSDT": 100,  # в AAVE
@@ -49,7 +49,8 @@ def fetch_funding_rate(symbol):
     return float(data["result"]["list"][0]["fundingRate"])
 
 def fetch_open_interest(symbol):
-    url = f"{BYBIT_API_BASE}/v5/market/open-interest?category=linear&symbol={symbol}&interval=5"
+    # Исправлен параметр interval на '5m'
+    url = f"{BYBIT_API_BASE}/v5/market/open-interest?category=linear&symbol={symbol}&interval=5m"
     resp = requests.get(url, headers=HEADERS)
     if resp.status_code != 200:
         logging.error(f"Open interest error {symbol}: {resp.text}")
