@@ -6,7 +6,7 @@ from aiogram.enums import ParseMode
 from aiogram.types import Message
 from aiogram.fsm.storage.memory import MemoryStorage
 
-API_TOKEN = 'ВАШ_ТОКЕН_ТЕЛЕГРАМ'
+API_TOKEN = '8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA'
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
