@@ -22,12 +22,9 @@ bot = Bot(token=TELEGRAM_TOKEN)
 
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
 
-# Исправленные URL API с /list в конце
-FUNDING_RATE_URL = "https://api.bybit.com/derivatives/v3/public/funding-rate/list"
-OPEN_INTEREST_URL = "https://api.bybit.com/derivatives/v3/public/open-interest/list"
-
-# Для open interest нужен параметр interval, например "1" (минута)
-OPEN_INTEREST_INTERVAL = "1"
+# Актуальные URL Bybit API
+FUNDING_RATE_URL = "https://api.bybit.com/public/linear/funding/prev-funding-rate"
+OPEN_INTEREST_URL = "https://api.bybit.com/v2/public/open-interest"
 
 def get_funding_rate(symbol):
     try:
@@ -37,37 +34,26 @@ def get_funding_rate(symbol):
         logging.info(f"Funding rate response for {symbol}: {response.text}")
         response.raise_for_status()
         data = response.json()
-        if data.get("retCode") == 0:
-            lst = data.get("result", {}).get("list", [])
-            if lst:
-                return float(lst[0].get("fundingRate", 0))
-            else:
-                logging.warning(f"Funding rate no data for {symbol}")
+        if data.get("ret_code") == 0:
+            return float(data.get("result", {}).get("prev_funding_rate", 0))
         else:
-            logging.error(f"Funding rate error {symbol}: {data.get('retMsg')}")
+            logging.error(f"Funding rate error {symbol}: {data.get('ret_msg')}")
     except Exception as e:
         logging.error(f"Funding rate exception {symbol}: {e}")
     return None
 
 def get_open_interest(symbol):
     try:
-        params = {
-            "symbol": symbol,
-            "interval": OPEN_INTEREST_INTERVAL  # строка "1"
-        }
+        params = {"symbol": symbol}
         response = requests.get(OPEN_INTEREST_URL, params=params)
         logging.info(f"Open interest HTTP status for {symbol}: {response.status_code}")
         logging.info(f"Open interest response for {symbol}: {response.text}")
         response.raise_for_status()
         data = response.json()
-        if data.get("retCode") == 0:
-            lst = data.get("result", {}).get("list", [])
-            if lst:
-                return float(lst[0].get("openInterest", 0))
-            else:
-                logging.warning(f"Open interest no data for {symbol}")
+        if data.get("ret_code") == 0:
+            return float(data.get("result", {}).get("open_interest", 0))
         else:
-            logging.error(f"Open interest error {symbol}: {data.get('retMsg')}")
+            logging.error(f"Open interest error {symbol}: {data.get('ret_msg')}")
     except Exception as e:
         logging.error(f"Open interest exception {symbol}: {e}")
     return None
@@ -81,7 +67,6 @@ def send_telegram_message(text):
 def on_message(ws, message):
     try:
         data = json.loads(message)
-        # Пример обработки входящего сообщения с ликвидациями
         if "data" in data:
             for item in data["data"]:
                 symbol = item.get("symbol")
