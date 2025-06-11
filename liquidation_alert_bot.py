@@ -3,14 +3,11 @@ import logging
 import aiohttp
 import websockets
 import json
-from datetime import datetime
 
-# Настройки
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
-CHAT_ID = "YOUR_TELEGRAM_CHAT_ID"
+TELEGRAM_TOKEN = "8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA"
+CHAT_ID = "5309903897"
 
-# API V5
 FUNDING_URL = "https://api.bybit.com/v5/market/funding/history"
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 WS_URL = "wss://stream.bybit.com/v5/public/linear"
@@ -19,25 +16,31 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(mess
 
 async def fetch_funding_rate(session, symbol):
     try:
-        params = {"category": "linear", "symbol": symbol, "limit": 1}
+        params = {"category": "linear", "symbol": symbol}
         async with session.get(FUNDING_URL, params=params) as response:
             data = await response.json()
-            rate = float(data['result']['list'][0]['fundingRate'])
-            return rate
+            if data.get("retCode") == 0 and data["result"]["list"]:
+                rate = float(data["result"]["list"][0]["fundingRate"])
+                return rate
+            else:
+                logging.error(f"Funding rate response for {symbol}: {data}")
     except Exception as e:
         logging.error(f"Funding rate error {symbol}: {e}")
-        return None
+    return None
 
 async def fetch_open_interest(session, symbol):
     try:
-        params = {"category": "linear", "symbol": symbol, "intervalTime": 60}
+        params = {"category": "linear", "symbol": symbol, "interval": "1"}
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
             data = await response.json()
-            value = float(data['result']['list'][0]['openInterest'])
-            return value
+            if data.get("retCode") == 0 and data["result"]["list"]:
+                value = float(data["result"]["list"][0]["openInterest"])
+                return value
+            else:
+                logging.error(f"Open interest response for {symbol}: {data}")
     except Exception as e:
         logging.error(f"Open interest error {symbol}: {e}")
-        return None
+    return None
 
 async def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -55,16 +58,14 @@ async def monitor_funding_and_interest():
 
 async def listen_liquidations():
     async with websockets.connect(WS_URL) as ws:
-        sub_msg = {
-            "op": "subscribe",
-            "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
-        }
+        args = [f"public.linear.liquidation.{symbol}" for symbol in SYMBOLS]
+        sub_msg = {"op": "subscribe", "args": args}
         await ws.send(json.dumps(sub_msg))
 
         while True:
             message = await ws.recv()
             data = json.loads(message)
-            if data.get("topic", "").startswith("liquidation"):
+            if data.get("topic", "").startswith("public.linear.liquidation"):
                 for entry in data.get("data", []):
                     symbol = entry.get("symbol")
                     price = entry.get("price")
