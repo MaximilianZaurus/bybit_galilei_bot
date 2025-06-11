@@ -2,23 +2,21 @@ import asyncio
 import aiohttp
 import logging
 from aiogram import Bot, Dispatcher, types
-from aiogram.utils import executor
+from aiogram.enums import ParseMode
+from aiogram.types import Message
+from aiogram.fsm.storage.memory import MemoryStorage
 
 API_TOKEN = 'ВАШ_ТОКЕН_ТЕЛЕГРАМ'
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 
-# Мониторим эти символы
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
+OPEN_INTEREST_THRESHOLD = 0.03  # 3%
 
-# Порог для уведомления (пример, можно менять)
-OPEN_INTEREST_THRESHOLD = 0.03  # 3% от дневного объёма (пример)
+logging.basicConfig(level=logging.INFO)
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(message)s')
+bot = Bot(token=API_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher(storage=MemoryStorage())
 
-bot = Bot(token=API_TOKEN)
-dp = Dispatcher(bot)
-
-# Словарь для хранения дневного объема (будем обновлять раз в сутки)
 daily_open_interest = {}
 
 async def fetch_open_interest(session, symbol):
@@ -26,7 +24,7 @@ async def fetch_open_interest(session, symbol):
         params = {
             "category": "linear",
             "symbol": symbol,
-            "intervalTime": "60",  # ВАЖНО: именно так, строчными буквами
+            "intervalTime": "60",
             "limit": 1
         }
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
@@ -44,7 +42,6 @@ async def fetch_open_interest(session, symbol):
 
 async def check_open_interest_changes(chat_id):
     async with aiohttp.ClientSession() as session:
-        # Инициализация дневного объема, если нет
         for symbol in SYMBOLS:
             if symbol not in daily_open_interest:
                 oi = await fetch_open_interest(session, symbol)
@@ -59,23 +56,25 @@ async def check_open_interest_changes(chat_id):
                     continue
                 base_oi = daily_open_interest.get(symbol, current_oi)
                 change = abs(current_oi - base_oi) / base_oi
-                logging.info(f"Symbol: {symbol}, base OI: {base_oi}, current OI: {current_oi}, change: {change:.4f}")
+                logging.info(f"{symbol}: base {base_oi}, current {current_oi}, change {change:.2%}")
 
                 if change > OPEN_INTEREST_THRESHOLD:
-                    msg = (f"⚠️ Open Interest for {symbol} changed by {change*100:.2f}%!\n"
-                           f"Base: {base_oi}\nCurrent: {current_oi}")
+                    msg = (f"⚠️ Open Interest for <b>{symbol}</b> changed by <b>{change*100:.2f}%</b>!\n"
+                           f"Base: {base_oi:.2f}\nCurrent: {current_oi:.2f}")
                     await bot.send_message(chat_id, msg)
-                    # Обновляем базу после уведомления
                     daily_open_interest[symbol] = current_oi
 
-            await asyncio.sleep(60)  # Проверяем каждую минуту
+            await asyncio.sleep(60)
 
-@dp.message_handler(commands=['start'])
-async def send_welcome(message: types.Message):
-    await message.answer("Привет! Я бот для отслеживания Open Interest на Bybit.\n"
-                         "Я буду присылать уведомления, если объем изменится более чем на 3% за час.")
-    # Запускаем задачу мониторинга
-    asyncio.create_task(check_open_interest_changes(message.chat.id))
+@dp.message()
+async def handle_start(message: Message):
+    if message.text == "/start":
+        await message.answer("Привет! Я бот для отслеживания Open Interest на Bybit.")
+        asyncio.create_task(check_open_interest_changes(message.chat.id))
 
-if __name__ == '__main__':
-    executor.start_polling(dp, skip_updates=True)
+async def main():
+    await bot.delete_webhook(drop_pending_updates=True)
+    await dp.start_polling(bot)
+
+if __name__ == "__main__":
+    asyncio.run(main())
