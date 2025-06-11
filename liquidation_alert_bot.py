@@ -10,14 +10,18 @@ logging.basicConfig(level=logging.INFO)
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-WS_URL = "wss://stream.bybit.com/v5/public/linear"
 
-def send_telegram_message(message):
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
+    logging.error("TELEGRAM_TOKEN и TELEGRAM_CHAT_ID должны быть заданы в переменных окружения")
+    exit(1)
+
+SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
+
+def send_telegram_message(text):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
         "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
+        "text": text,
         "parse_mode": "HTML"
     }
     try:
@@ -25,17 +29,20 @@ def send_telegram_message(message):
         if not response.ok:
             logging.error(f"Telegram error: {response.text}")
     except Exception as e:
-        logging.error(f"Telegram error: {e}")
+        logging.error(f"Telegram send error: {e}")
 
 def fetch_funding_rate(symbol):
-    url = f"https://api.bybit.com/v5/market/funding/history?symbol={symbol}&category=linear"
+    url = f"https://api.bybit.com/v5/market/funding-rate?symbol={symbol}&category=linear"
     try:
         response = requests.get(url)
         data = response.json()
         logging.info(f"Funding rate raw response for {symbol}: {json.dumps(data)}")
-        if data["result"]["list"]:
-            rate = float(data["result"]["list"][0]["fundingRate"]) * 100
-            return rate
+        if data.get("retCode") == 0:
+            rates = data["result"].get("list", [])
+            if rates:
+                return float(rates[0]["fundingRate"])
+        else:
+            logging.error(f"Funding rate error {symbol}: {data.get('retMsg')}")
     except Exception as e:
         logging.error(f"Funding rate error {symbol}: {e}")
     return None
@@ -46,6 +53,11 @@ def fetch_open_interest(symbol):
         response = requests.get(url)
         data = response.json()
         logging.info(f"Open interest raw response for {symbol}: {json.dumps(data)}")
+
+        if data.get("retCode") != 0:
+            logging.error(f"Open interest error {symbol}: {data.get('retMsg')}")
+            return None
+
         oi_list = data["result"].get("list", [])
         if len(oi_list) >= 2:
             oi_now = float(oi_list[0]["openInterest"])
@@ -58,95 +70,78 @@ def fetch_open_interest(symbol):
         logging.error(f"Open interest error {symbol}: {e}")
     return None
 
-def monitor_metrics():
-    while True:
-        for symbol in SYMBOLS:
-            funding_rate = fetch_funding_rate(symbol)
-            open_interest_change = fetch_open_interest(symbol)
-            messages = []
-
-            if funding_rate is not None and abs(funding_rate) > 0.1:
-                messages.append(f"⚠️ <b>{symbol}</b> funding rate: {funding_rate:.4f}%")
-
-            if open_interest_change is not None and abs(open_interest_change) > 3:
-                messages.append(f"📈 <b>{symbol}</b> OI change: {open_interest_change:.2f}%")
-
-            for msg in messages:
-                send_telegram_message(msg)
-
-        time.sleep(300)  # 5 минут
-
-def handle_liquidation_message(msg, symbol):
-    try:
-        if isinstance(msg, str):
-            msg = json.loads(msg)
-
-        data = msg.get("data", {})
-        price = float(data.get("price", 0))
-        quantity = float(data.get("qty", 0))
-        side = data.get("side", "Unknown")
-
-        if not price or not quantity:
-            logging.warning(f"Incomplete liquidation data: {msg}")
-            return
-
-        value = price * quantity
-        if value > 100_000:
-            message = (
-                f"💥 Ликвидация <b>{symbol}</b>\n"
-                f"🔹 Side: {side}\n"
-                f"🔹 Цена: {price}\n"
-                f"🔹 Объём: {quantity}\n"
-                f"🔹 Сумма: {int(value):,} USDT"
-            )
-            logging.info(f"Liquidation alert: {message}")
-            send_telegram_message(message)
-    except Exception as e:
-        logging.error(f"WebSocket error: {e}")
-
 def on_message(ws, message):
     try:
         msg = json.loads(message)
-        topic = msg.get("topic", "")
-        for symbol in SYMBOLS:
-            if topic == f"liquidation.{symbol}":
-                handle_liquidation_message(msg, symbol)
+        if "data" in msg:
+            data = msg["data"]
+            for item in data:
+                symbol = item.get("symbol")
+                if not symbol:
+                    continue
+                side = item.get("side")
+                price = item.get("price")
+                qty = item.get("size")
+                ts = item.get("time")
+                text = (f"🚨 <b>Liquidation Alert</b>\n"
+                        f"Symbol: {symbol}\n"
+                        f"Side: {side}\n"
+                        f"Price: {price}\n"
+                        f"Quantity: {qty}\n"
+                        f"Timestamp: {ts}")
+                send_telegram_message(text)
     except Exception as e:
-        logging.error(f"on_message error: {e}")
+        logging.error(f"Error in on_message: {e}")
 
 def on_error(ws, error):
     logging.error(f"WebSocket error: {error}")
 
 def on_close(ws, close_status_code, close_msg):
-    logging.warning(f"WebSocket closed: {close_status_code}, {close_msg}")
+    logging.info("WebSocket connection closed")
 
 def on_open(ws):
-    try:
-        args = [f"liquidation.{symbol}" for symbol in SYMBOLS]
-        payload = {
-            "op": "subscribe",
-            "args": args
-        }
-        ws.send(json.dumps(payload))
-        logging.info(f"Subscribed to WS: {args}")
-    except Exception as e:
-        logging.error(f"WebSocket subscription error: {e}")
+    logging.info(f"Subscribed to WS: {['liquidation.' + s for s in SYMBOLS]}")
 
-def run_ws():
-    ws = websocket.WebSocketApp(
-        WS_URL,
-        on_open=on_open,
-        on_message=on_message,
-        on_error=on_error,
-        on_close=on_close
-    )
+def start_ws():
+    ws_url = "wss://stream.bybit.com/realtime_public"
+    params = {
+        "op": "subscribe",
+        "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
+    }
+    ws = websocket.WebSocketApp(ws_url,
+                                on_message=on_message,
+                                on_error=on_error,
+                                on_close=on_close,
+                                on_open=lambda ws: ws.send(json.dumps(params)))
     ws.run_forever()
+
+def main_loop():
+    while True:
+        for symbol in SYMBOLS:
+            fr = fetch_funding_rate(symbol)
+            oi_change = fetch_open_interest(symbol)
+
+            msg = f"<b>{symbol}</b>\n"
+            if fr is not None:
+                msg += f"Funding Rate: {fr:.6f}\n"
+            else:
+                msg += "Funding Rate: no data\n"
+
+            if oi_change is not None:
+                msg += f"Open Interest Change 1h: {oi_change:.2f}%"
+            else:
+                msg += "Open Interest Change 1h: no data"
+
+            logging.info(msg)
+            time.sleep(1)
+        time.sleep(30)
 
 if __name__ == "__main__":
     logging.info("Bot started")
-    t1 = threading.Thread(target=run_ws)
-    t2 = threading.Thread(target=monitor_metrics)
-    t1.start()
-    t2.start()
-    t1.join()
-    t2.join()
+
+    # Запускаем WebSocket в отдельном потоке
+    ws_thread = threading.Thread(target=start_ws)
+    ws_thread.daemon = True
+    ws_thread.start()
+
+    main_loop()
