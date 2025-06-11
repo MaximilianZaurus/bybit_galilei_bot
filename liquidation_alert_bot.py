@@ -3,11 +3,15 @@ import logging
 import aiohttp
 import websockets
 import json
+from datetime import datetime
+import os
 
+# Настройки
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-TELEGRAM_TOKEN = "8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA"
-CHAT_ID = "5309903897"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# API V5
 FUNDING_URL = "https://api.bybit.com/v5/market/funding/history"
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 WS_URL = "wss://stream.bybit.com/v5/public/linear"
@@ -16,21 +20,18 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s:%(mess
 
 async def fetch_funding_rate(session, symbol):
     try:
-        params = {"category": "linear", "symbol": symbol}
+        params = {"category": "linear", "symbol": symbol, "limit": 1}
         async with session.get(FUNDING_URL, params=params) as response:
             data = await response.json()
-            if data.get("retCode") == 0 and data["result"]["list"]:
-                rate = float(data["result"]["list"][0]["fundingRate"])
-                return rate
-            else:
-                logging.error(f"Funding rate response for {symbol}: {data}")
+            rate = float(data['result']['list'][0]['fundingRate'])
+            return rate
     except Exception as e:
         logging.error(f"Funding rate error {symbol}: {e}")
-    return None
+        return None
 
 async def fetch_open_interest(session, symbol):
     try:
-        params = {"category": "linear", "symbol": symbol, "interval": "1"}
+        params = {"category": "linear", "symbol": symbol, "intervalTime": "60"}
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
             data = await response.json()
             if data.get("retCode") == 0 and data["result"]["list"]:
@@ -58,14 +59,16 @@ async def monitor_funding_and_interest():
 
 async def listen_liquidations():
     async with websockets.connect(WS_URL) as ws:
-        args = [f"public.linear.liquidation.{symbol}" for symbol in SYMBOLS]
-        sub_msg = {"op": "subscribe", "args": args}
+        sub_msg = {
+            "op": "subscribe",
+            "args": [f"liquidation.{symbol}" for symbol in SYMBOLS]
+        }
         await ws.send(json.dumps(sub_msg))
 
         while True:
             message = await ws.recv()
             data = json.loads(message)
-            if data.get("topic", "").startswith("public.linear.liquidation"):
+            if data.get("topic", "").startswith("liquidation"):
                 for entry in data.get("data", []):
                     symbol = entry.get("symbol")
                     price = entry.get("price")
