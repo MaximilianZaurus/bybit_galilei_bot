@@ -3,15 +3,14 @@ import logging
 import aiohttp
 import websockets
 import json
-from datetime import datetime
-import os
+from datetime import datetime, timedelta
 
 # Настройки
 SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "AAVEUSDT"]
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = "8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA"
+CHAT_ID = "5309903897"
 
-# API V5
+# API Bybit V5
 FUNDING_URL = "https://api.bybit.com/v5/market/funding/history"
 OPEN_INTEREST_URL = "https://api.bybit.com/v5/market/open-interest"
 WS_URL = "wss://stream.bybit.com/v5/public/linear"
@@ -31,11 +30,21 @@ async def fetch_funding_rate(session, symbol):
 
 async def fetch_open_interest(session, symbol):
     try:
-        params = {"category": "linear", "symbol": symbol, "intervalTime": "60"}
+        now = int(datetime.utcnow().timestamp() * 1000)
+        one_hour_ago = now - 60 * 60 * 1000
+
+        params = {
+            "category": "linear",
+            "symbol": symbol,
+            "intervalTime": "60",
+            "startTime": one_hour_ago,
+            "endTime": now
+        }
         async with session.get(OPEN_INTEREST_URL, params=params) as response:
             data = await response.json()
             if data.get("retCode") == 0 and data["result"]["list"]:
-                value = float(data["result"]["list"][0]["openInterest"])
+                latest = data["result"]["list"][-1]
+                value = float(latest["openInterest"])
                 return value
             else:
                 logging.error(f"Open interest response for {symbol}: {data}")
