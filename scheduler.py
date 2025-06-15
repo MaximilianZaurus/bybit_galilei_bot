@@ -3,6 +3,8 @@ import json
 import logging
 import pandas as pd
 import httpx
+import sys
+import traceback
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
@@ -100,9 +102,13 @@ def start_scheduler():
 
 @app.on_event("startup")
 async def on_startup():
-    start_scheduler()
-    # Запускаем отправку стартового сообщения как отдельную таску, чтобы не блокировать event loop
-    asyncio.create_task(send_message("🚀 Бот запущен и работает. Первый анализ будет через 15 минут."))
+    try:
+        start_scheduler()
+        await send_message("🚀 Бот запущен и работает. Первый анализ будет через 15 минут.")
+        logger.info("Startup complete, bot running.")
+    except Exception as e:
+        logger.error(f"Error on startup: {e}")
+        traceback.print_exc(file=sys.stdout)
 
 @app.get("/")
 async def root():
