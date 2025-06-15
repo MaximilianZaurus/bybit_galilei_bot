@@ -1,3 +1,4 @@
+# main.py
 import asyncio
 import json
 import logging
@@ -5,9 +6,10 @@ import pandas as pd
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
+from fastapi import FastAPI
 
-from bot import send_message  # Асинхронная функция отправки сообщения в Telegram
-from signals import analyze_signal
+from bot import send_message       # твоя асинхронная функция отправки сообщения в Telegram
+from signals import analyze_signal # твоя функция анализа сигналов
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -15,12 +17,12 @@ logger = logging.getLogger(__name__)
 TIMEFRAME = '15'  # 15 минутные свечи
 API_URL = 'https://api.bybit.com/public/linear/kline'
 
+app = FastAPI()
 
 def load_tickers():
     """Загружает тикеры из файла tickers.json"""
-    with open('tickers.json', 'r') as f:
+    with open('tickers.json', 'r', encoding='utf-8') as f:
         return json.load(f)
-
 
 async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
     """Асинхронно запрашивает свечные данные с Bybit и возвращает DataFrame"""
@@ -44,7 +46,6 @@ async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col])
     return df
-
 
 async def analyze_and_send():
     tickers = load_tickers()
@@ -76,17 +77,27 @@ async def analyze_and_send():
     final_message = "\n\n".join(messages)
     await send_message(final_message)
 
+scheduler = None
 
 def start_scheduler():
-    scheduler = AsyncIOScheduler()
+    global scheduler
+    loop = asyncio.get_event_loop()
+    scheduler = AsyncIOScheduler(event_loop=loop)
 
-    # Используем asyncio.ensure_future напрямую в job-функции
     async def async_job_wrapper():
         await analyze_and_send()
 
     def run_async_job():
-        asyncio.ensure_future(async_job_wrapper())
+        asyncio.run_coroutine_threadsafe(async_job_wrapper(), loop)
 
     scheduler.add_job(run_async_job, trigger=IntervalTrigger(minutes=15))
     scheduler.start()
     logger.info("Scheduler started, running every 15 minutes")
+
+@app.on_event("startup")
+async def on_startup():
+    start_scheduler()
+
+@app.get("/")
+async def root():
+    return {"message": "Bot is running"}
