@@ -1,4 +1,4 @@
-# main.py
+# scheduler.py
 import asyncio
 import json
 import logging
@@ -14,9 +14,8 @@ from signals import analyze_signal # твоя функция анализа си
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-TIMEFRAME = '15'  # 15 минутные свечи
-API_URL = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=15&limit=50"
-
+TIMEFRAME = '15'  # 15-минутные свечи
+BASE_URL = "https://api.bybit.com/v5/market/kline"
 
 app = FastAPI()
 
@@ -28,20 +27,24 @@ def load_tickers():
 async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
     """Асинхронно запрашивает свечные данные с Bybit и возвращает DataFrame"""
     params = {
+        'category': 'linear',
         'symbol': ticker,
         'interval': TIMEFRAME,
         'limit': limit
     }
     async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(API_URL, params=params)
+        resp = await client.get(BASE_URL, params=params)
         resp.raise_for_status()
         data = resp.json()
 
     if data.get('ret_code', 1) != 0:
         raise Exception(f"API Error for {ticker}: {data.get('ret_msg')}")
 
-    klines = data['result']
-    df = pd.DataFrame(klines)
+    klines = data['result']['list']
+    df = pd.DataFrame(klines, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume',
+        '_1', '_2', '_3', '_4', '_5', '_6'
+    ])
     df = df[['open_time', 'open', 'high', 'low', 'close', 'volume']]
     df['open_time'] = pd.to_datetime(df['open_time'], unit='s')
     for col in ['open', 'high', 'low', 'close', 'volume']:
@@ -73,7 +76,7 @@ async def analyze_and_send():
             messages.append(msg)
         except Exception as e:
             logger.error(f"Ошибка при обработке {ticker}: {e}")
-            messages.append(f"Ошибка с {ticker}: {e}")
+            messages.append(f"❗ Ошибка с {ticker}: {e}")
 
     final_message = "\n\n".join(messages)
     await send_message(final_message)
