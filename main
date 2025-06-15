@@ -1,19 +1,18 @@
 # main.py
 import os
 from fastapi import FastAPI, Request
-from bot import application
 from telegram import Update
-from telegram.ext import Application
-import logging
+from bot import application
+from scheduler import start_scheduler
 
 app = FastAPI()
 
-BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
 
 @app.on_event("startup")
-async def setup_webhook():
+async def startup():
     await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+    start_scheduler()
 
 @app.post("/webhook")
 async def telegram_webhook(req: Request):
