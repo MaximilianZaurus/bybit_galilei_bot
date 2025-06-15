@@ -15,7 +15,8 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEFRAME = '15'  # 15 минутные свечи
-API_URL = 'https://api.bybit.com/public/linear/kline'
+API_URL = f"https://api.bybit.com/v5/market/kline?category=linear&symbol={symbol}&interval=15&limit=50"
+
 
 app = FastAPI()
 
