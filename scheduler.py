@@ -1,34 +1,51 @@
-from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from telegram import Bot
-from signals import check_galilei_signal, TICKERS
 import asyncio
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+import pandas as pd
+from signals import TICKERS, fetch_klines, analyze_ticker
+from bot import send_telegram_message
 
-def setup_scheduler(bot: Bot, chat_id: str):
-    scheduler = AsyncIOScheduler()
+# Флаг волатильности по тикерам (True — высокая волатильность)
+VOLATILITY_FLAGS = {ticker: False for ticker in TICKERS}
 
-    scheduler.add_job(send_galilei_summary, "date", run_date=None, kwargs={
-        "bot": bot, "chat_id": chat_id
-    })
+scheduler = AsyncIOScheduler()
 
-    scheduler.add_job(send_galilei_summary, "interval", hours=1, kwargs={
-        "bot": bot, "chat_id": chat_id
-    })
+def is_high_volatility(df: pd.DataFrame) -> bool:
+    """Определяем высокую волатильность: изменение цены > 1.5% за последний интервал"""
+    if len(df) < 2:
+        return False
+    prev_close = df['close'].iloc[-2]
+    last_close = df['close'].iloc[-1]
+    change = abs(last_close - prev_close) / prev_close
+    return change > 0.015  # 1.5%
 
-    scheduler.start()
-
-async def send_galilei_summary(bot: Bot, chat_id: str):
-    messages = []
+async def run_signal_analysis():
     for ticker in TICKERS:
         try:
-            signal, data = await check_galilei_signal(ticker)
-            msg = f"📊 <b>{ticker}</b>\n"
-            msg += f"1. Боллинджер: {'🟢' if data['close_psar'] <= data['psar'] else '❌'}\n"
-            msg += f"2. CMO ({data['cmo']:.2f}): {'🟢' if data['cmo'] < -55 else '❌'}\n"
-            msg += f"3. ADX ({data['adx']:.2f}): {'🟢' if data['adx'] > 35 else '❌'}\n"
-            msg += f"4. PSAR ({data['psar']:.2f}): {'🟢' if data['psar'] < data['close_psar'] else '❌'}\n"
-            msg += f"➡️ Сигнал: {'✅ Да' if signal else '❌ Нет'}\n"
-            messages.append(msg)
+            df = await fetch_klines(ticker, interval='15m', limit=50)
+            high_volatility = is_high_volatility(df)
+            VOLATILITY_FLAGS[ticker] = high_volatility
+
+            message = await analyze_ticker(ticker, df)
+            await send_telegram_message(message)
         except Exception as e:
-            messages.append(f"⚠️ Ошибка при анализе {ticker}: {e}")
-    full_report = "\n\n".join(messages)
-    await bot.send_message(chat_id=chat_id, text=full_report, parse_mode="HTML")
+            print(f"Error processing {ticker}: {e}")
+
+    reschedule_job()
+
+def reschedule_job():
+    # Если по любому тикеру высокая волатильность — интервал 10 минут, иначе 30
+    interval = 10 if any(VOLATILITY_FLAGS.values()) else 30
+    scheduler.reschedule_job(
+        "signal_analysis",
+        trigger=IntervalTrigger(minutes=interval)
+    )
+    print(f"Scheduler interval updated to {interval} minutes.")
+
+def start_scheduler():
+    scheduler.add_job(run_signal_analysis, IntervalTrigger(minutes=30), id="signal_analysis")
+    scheduler.start()
+    print("Scheduler started with 30-minute interval.")
+
+    # При старте сразу запустим анализ (чтобы отправить стартовую статистику)
+    asyncio.create_task(run_signal_analysis())
