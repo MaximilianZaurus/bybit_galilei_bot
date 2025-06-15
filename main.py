@@ -7,21 +7,22 @@ from scheduler import start_scheduler
 
 load_dotenv()
 
-app = FastAPI()
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+if not BOT_TOKEN:
+    raise RuntimeError("BOT_TOKEN is not set in environment variables")
 
+app = FastAPI()
 
 @app.on_event("startup")
 async def startup_event():
     # Запускаем планировщик при старте приложения
     start_scheduler()
 
-
-@app.post(f"/webhook/{os.getenv('BOT_TOKEN')}")
+@app.post(f"/webhook/{BOT_TOKEN}")
 async def telegram_webhook(req: Request):
     update = await req.json()
     await telegram_app.update(update)
     return {"status": "ok"}
-
 
 @app.get("/")
 def read_root():
