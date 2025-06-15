@@ -53,6 +53,22 @@ async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col])
     return df
 
+async def get_open_interest(ticker: str) -> float:
+    """Получает текущий Open Interest с Bybit"""
+    url = f"https://api.bybit.com/v5/market/open-interest?category=linear&symbol={ticker}&interval=15"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url)
+            data = resp.json()
+            return float(data['result']['list'][-1]['openInterest'])
+    except Exception as e:
+        logger.warning(f"Ошибка при получении OI для {ticker}: {e}")
+        return None
+
+def mock_cvd(df: pd.DataFrame) -> float:
+    """Временный расчёт CVD — сумма дифференциала цены"""
+    return df['close'].diff().fillna(0).cumsum().iloc[-1]
+
 async def analyze_and_send():
     tickers = load_tickers()
     messages = []
@@ -61,14 +77,17 @@ async def analyze_and_send():
         try:
             df = await fetch_klines(ticker)
             signals = analyze_signal(df)
-            d = signals['details']
 
+            cvd_value = mock_cvd(df)
+            oi_value = await get_open_interest(ticker)
+
+            d = signals['details']
             msg = (
                 f"📈 <b>{ticker}</b>\n"
                 f"Цена: {d['close']:.4f}\n"
                 f"RSI: {d['rsi']:.2f} | CCI: {d['cci']:.2f} | MACD Hist: {d['macd_hist']:.4f}\n"
                 f"Bollinger Bands: [{d['bb_lower']:.4f} - {d['bb_upper']:.4f}]\n"
-                f"Объём: {d['volume']:.2f} (средний: {d['volume_ma']:.2f})\n\n"
+                f"CVD: {cvd_value:.2f} | OI: {oi_value:.2f}\n\n"
                 f"Сигналы:\n"
                 f"▶️ Вход в Лонг: {'✅' if signals['long_entry'] else '❌'}\n"
                 f"⏹ Выход из Лонга: {'✅' if signals['long_exit'] else '❌'}\n"
