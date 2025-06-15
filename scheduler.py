@@ -1,18 +1,17 @@
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from telegram import Bot
 from signals import check_galilei_signal, TICKERS
-import os
 import asyncio
 
-def setup_scheduler(bot: Bot):
+def setup_scheduler(bot: Bot, chat_id: str):
     scheduler = AsyncIOScheduler()
 
     scheduler.add_job(send_galilei_summary, "date", run_date=None, kwargs={
-        "bot": bot, "chat_id": os.getenv("ADMIN_CHAT_ID")
+        "bot": bot, "chat_id": chat_id
     })
 
     scheduler.add_job(send_galilei_summary, "interval", hours=1, kwargs={
-        "bot": bot, "chat_id": os.getenv("ADMIN_CHAT_ID")
+        "bot": bot, "chat_id": chat_id
     })
 
     scheduler.start()
