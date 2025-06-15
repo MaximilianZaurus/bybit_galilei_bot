@@ -1,68 +1,75 @@
 import pandas as pd
 import ta
 
-def analyze_signal(df: pd.DataFrame) -> dict:
+def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
     """
-    Анализ сигналов для входа/выхода из LONG и SHORT позиций.
-    Используются RSI, CCI, MACD, Bollinger Bands, объём.
+    Анализирует сигналы на вход и выход в LONG и SHORT на основе индикаторов:
+    RSI, CCI, MACD Histogram, Bollinger Bands, CVD и Open Interest delta.
 
-    Возвращает словарь с булевыми флагами и подробностями для дебага.
+    Параметры:
+        df: DataFrame с историей свечей
+        cvd: float — текущее значение CVD (кумулятивная дельта)
+        oi_delta: float — изменение OI за 3 свечи (положительное или отрицательное)
+
+    Возвращает словарь с флагами сигналов и подробностями.
     """
     close = df['close']
-    volume = df['volume']
+    high = df['high']
+    low = df['low']
 
+    # Индикаторы
     rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci = ta.trend.CCIIndicator(df['high'], df['low'], close, window=20).cci()
+    cci = ta.trend.CCIIndicator(high, low, close, window=20).cci()
+    macd_hist = ta.trend.MACD(close).macd_diff()
+    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
 
-    macd_ind = ta.trend.MACD(close, window_slow=26, window_fast=12, window_sign=9)
-    macd_hist = macd_ind.macd_diff()
-
-    bb_ind = ta.volatility.BollingerBands(close, window=20, window_dev=2)
-    bb_upper = bb_ind.bollinger_hband()
-    bb_lower = bb_ind.bollinger_lband()
-
-    volume_ma = volume.rolling(window=20).mean()
-
+    # Текущие значения
     rsi_curr = rsi.iloc[-1]
     cci_curr = cci.iloc[-1]
     macd_hist_curr = macd_hist.iloc[-1]
+    macd_trend_up = macd_hist.iloc[-3:].is_monotonic_increasing
+    macd_trend_down = macd_hist.iloc[-3:].is_monotonic_decreasing
     close_curr = close.iloc[-1]
-    bb_upper_curr = bb_upper.iloc[-1]
-    bb_lower_curr = bb_lower.iloc[-1]
-    volume_curr = volume.iloc[-1]
-    volume_ma_curr = volume_ma.iloc[-1]
+    bb_upper = bb.bollinger_hband().iloc[-1]
+    bb_lower = bb.bollinger_lband().iloc[-1]
 
-    macd_hist_trend = macd_hist.iloc[-3:].is_monotonic_increasing
-    macd_hist_fall = macd_hist.iloc[-3:].is_monotonic_decreasing
+    # CVD/ OI усилители
+    cvd_positive = cvd > 0
+    cvd_negative = cvd < 0
+    oi_rising = oi_delta > 0
+    oi_falling = oi_delta < 0
 
+    # Логика входа и выхода
     long_entry = (
-        (rsi_curr < 30) and
-        (cci_curr < -100) and
-        macd_hist_trend and
-        (close_curr <= bb_lower_curr) and
-        (volume_curr > volume_ma_curr)
+        rsi_curr < 30 and
+        cci_curr < -100 and
+        macd_trend_up and
+        close_curr <= bb_lower and
+        cvd_positive and
+        oi_rising
     )
 
     long_exit = (
-        (rsi_curr > 70) and
-        (cci_curr > 100) and
-        macd_hist_fall and
-        (close_curr >= bb_upper_curr)
+        rsi_curr > 70 and
+        cci_curr > 100 and
+        macd_trend_down and
+        close_curr >= bb_upper
     )
 
     short_entry = (
-        (rsi_curr > 70) and
-        (cci_curr > 100) and
-        macd_hist_fall and
-        (close_curr >= bb_upper_curr) and
-        (volume_curr > volume_ma_curr)
+        rsi_curr > 70 and
+        cci_curr > 100 and
+        macd_trend_down and
+        close_curr >= bb_upper and
+        cvd_negative and
+        oi_rising
     )
 
     short_exit = (
-        (rsi_curr < 30) and
-        (cci_curr < -100) and
-        macd_hist_trend and
-        (close_curr <= bb_lower_curr)
+        rsi_curr < 30 and
+        cci_curr < -100 and
+        macd_trend_up and
+        close_curr <= bb_lower
     )
 
     return {
@@ -75,9 +82,9 @@ def analyze_signal(df: pd.DataFrame) -> dict:
             'cci': cci_curr,
             'macd_hist': macd_hist_curr,
             'close': close_curr,
-            'bb_upper': bb_upper_curr,
-            'bb_lower': bb_lower_curr,
-            'volume': volume_curr,
-            'volume_ma': volume_ma_curr
+            'bb_upper': bb_upper,
+            'bb_lower': bb_lower,
+            'cvd': cvd,
+            'oi_delta': oi_delta
         }
     }
