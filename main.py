@@ -2,7 +2,7 @@ import os
 from fastapi import FastAPI, Request
 from telegram import Update, Bot
 from telegram.ext import Application, ApplicationBuilder
-from scheduler import setup_scheduler
+from scheduler import start_scheduler
 from dotenv import load_dotenv
 
 load_dotenv()
