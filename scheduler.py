@@ -20,10 +20,12 @@ BASE_URL = "https://api.bybit.com/v5/market/kline"
 
 app = FastAPI()
 
+
 def load_tickers():
     """Загружает тикеры из файла tickers.json"""
     with open('tickers.json', 'r', encoding='utf-8') as f:
         return json.load(f)
+
 
 async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
     """Асинхронно запрашивает свечные данные с Bybit и возвращает DataFrame"""
@@ -53,21 +55,37 @@ async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
         df[col] = pd.to_numeric(df[col])
     return df
 
-async def get_open_interest(ticker: str) -> float:
-    """Получает текущий Open Interest с Bybit"""
+
+async def get_open_interest_history(ticker: str) -> list[dict]:
+    """Получает историю Open Interest (до 200 точек)"""
     url = f"https://api.bybit.com/v5/market/open-interest?category=linear&symbol={ticker}&interval=15"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url)
             data = resp.json()
-            return float(data['result']['list'][-1]['openInterest'])
+            return data['result']['list']
     except Exception as e:
-        logger.warning(f"Ошибка при получении OI для {ticker}: {e}")
-        return None
+        logger.warning(f"Ошибка при получении истории OI для {ticker}: {e}")
+        return []
+
+
+def calculate_oi_delta(oi_list: list[dict]) -> float:
+    """Считает разницу Open Interest за 3 свечи"""
+    if len(oi_list) < 4:
+        return 0.0
+    try:
+        current = float(oi_list[-1]['openInterest'])
+        past = float(oi_list[-4]['openInterest'])
+        return current - past
+    except Exception as e:
+        logger.warning(f"Ошибка при расчёте oi_delta: {e}")
+        return 0.0
+
 
 def mock_cvd(df: pd.DataFrame) -> float:
     """Временный расчёт CVD — сумма дифференциала цены"""
     return df['close'].diff().fillna(0).cumsum().iloc[-1]
+
 
 async def analyze_and_send():
     tickers = load_tickers()
@@ -76,18 +94,25 @@ async def analyze_and_send():
     for ticker in tickers:
         try:
             df = await fetch_klines(ticker)
-            signals = analyze_signal(df)
 
+            # Имитированный CVD
             cvd_value = mock_cvd(df)
-            oi_value = await get_open_interest(ticker)
 
+            # История Open Interest и Delta
+            oi_history = await get_open_interest_history(ticker)
+            oi_delta = calculate_oi_delta(oi_history)
+            oi_value = float(oi_history[-1]['openInterest']) if oi_history else 0.0
+
+            # Анализ сигналов с cvd и oi_delta
+            signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta)
             d = signals['details']
+
             msg = (
                 f"📈 <b>{ticker}</b>\n"
                 f"Цена: {d['close']:.4f}\n"
                 f"RSI: {d['rsi']:.2f} | CCI: {d['cci']:.2f} | MACD Hist: {d['macd_hist']:.4f}\n"
                 f"Bollinger Bands: [{d['bb_lower']:.4f} - {d['bb_upper']:.4f}]\n"
-                f"CVD: {cvd_value:.2f} | OI: {oi_value:.2f}\n\n"
+                f"CVD: {cvd_value:.2f} | OI: {oi_value:.2f} | ΔOI: {oi_delta:.2f}\n\n"
                 f"Сигналы:\n"
                 f"▶️ Вход в Лонг: {'✅' if signals['long_entry'] else '❌'}\n"
                 f"⏹ Выход из Лонга: {'✅' if signals['long_exit'] else '❌'}\n"
@@ -101,6 +126,7 @@ async def analyze_and_send():
 
     final_message = "\n\n".join(messages)
     await send_message(final_message)
+
 
 scheduler = None
 
@@ -119,6 +145,7 @@ def start_scheduler():
     scheduler.start()
     logger.info("Scheduler started, running every 15 minutes")
 
+
 @app.on_event("startup")
 async def on_startup():
     try:
@@ -128,6 +155,7 @@ async def on_startup():
     except Exception as e:
         logger.error(f"Error on startup: {e}")
         traceback.print_exc(file=sys.stdout)
+
 
 @app.get("/")
 async def root():
