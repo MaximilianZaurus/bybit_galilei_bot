@@ -4,6 +4,7 @@ import logging
 import pandas as pd
 import httpx
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.interval import IntervalTrigger
 
 from bot import send_message  # Асинхронная функция отправки сообщения в Telegram
 from signals import analyze_signal
@@ -78,6 +79,14 @@ async def analyze_and_send():
 
 def start_scheduler():
     scheduler = AsyncIOScheduler()
-    scheduler.add_job(lambda: asyncio.create_task(analyze_and_send()), 'interval', minutes=15)
+
+    # Используем asyncio.ensure_future напрямую в job-функции
+    async def async_job_wrapper():
+        await analyze_and_send()
+
+    def run_async_job():
+        asyncio.ensure_future(async_job_wrapper())
+
+    scheduler.add_job(run_async_job, trigger=IntervalTrigger(minutes=15))
     scheduler.start()
     logger.info("Scheduler started, running every 15 minutes")
