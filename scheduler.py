@@ -42,7 +42,7 @@ def reschedule_job():
     )
     print(f"Scheduler interval updated to {interval} minutes.")
 
-def start_scheduler(app, bot):
+def start_scheduler(app, bot, CHAT_ID):
     scheduler.add_job(run_signal_analysis, IntervalTrigger(minutes=30), id="signal_analysis")
     scheduler.start()
     print("Scheduler started with 30-minute interval.")
