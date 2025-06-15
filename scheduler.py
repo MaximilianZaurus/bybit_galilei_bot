@@ -1,29 +1,35 @@
-# scheduler.py
-import os
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
-from bot import application
+from telegram import Bot
 from signals import check_galilei_signal, TICKERS
+import os
+import asyncio
 
-CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
-scheduler = AsyncIOScheduler()
+def setup_scheduler(bot: Bot):
+    scheduler = AsyncIOScheduler()
 
-async def run_signal_checks():
-    for symbol in TICKERS:
-        try:
-            result, indicators = await check_galilei_signal(symbol)
-            if result:
-                msg = (
-                    f"🟢 Сигнал по стратегии «Галилей» на {symbol}\n\n"
-                    f"📈 *Индикаторы:*\n"
-                    f"Bollinger Lower Touch (1h): ✅\n"
-                    f"CMO (30m): {indicators['cmo']:.2f} (< -55 ✅)\n"
-                    f"ADX (30m): {indicators['adx']:.2f} (> 35 ✅)\n"
-                    f"Parabolic SAR (5m): {indicators['psar']:.2f} < Цена ({indicators['close_psar']:.2f}) ✅"
-                )
-                await application.bot.send_message(chat_id=CHAT_ID, text=msg, parse_mode="Markdown")
-        except Exception as e:
-            print(f"Ошибка на {symbol}: {e}")
+    scheduler.add_job(send_galilei_summary, "date", run_date=None, kwargs={
+        "bot": bot, "chat_id": os.getenv("ADMIN_CHAT_ID")
+    })
 
-def start_scheduler():
-    scheduler.add_job(run_signal_checks, "interval", minutes=15)
+    scheduler.add_job(send_galilei_summary, "interval", hours=1, kwargs={
+        "bot": bot, "chat_id": os.getenv("ADMIN_CHAT_ID")
+    })
+
     scheduler.start()
+
+async def send_galilei_summary(bot: Bot, chat_id: str):
+    messages = []
+    for ticker in TICKERS:
+        try:
+            signal, data = await check_galilei_signal(ticker)
+            msg = f"📊 <b>{ticker}</b>\n"
+            msg += f"1. Боллинджер: {'🟢' if data['close_psar'] <= data['psar'] else '❌'}\n"
+            msg += f"2. CMO ({data['cmo']:.2f}): {'🟢' if data['cmo'] < -55 else '❌'}\n"
+            msg += f"3. ADX ({data['adx']:.2f}): {'🟢' if data['adx'] > 35 else '❌'}\n"
+            msg += f"4. PSAR ({data['psar']:.2f}): {'🟢' if data['psar'] < data['close_psar'] else '❌'}\n"
+            msg += f"➡️ Сигнал: {'✅ Да' if signal else '❌ Нет'}\n"
+            messages.append(msg)
+        except Exception as e:
+            messages.append(f"⚠️ Ошибка при анализе {ticker}: {e}")
+    full_report = "\n\n".join(messages)
+    await bot.send_message(chat_id=chat_id, text=full_report, parse_mode="HTML")
