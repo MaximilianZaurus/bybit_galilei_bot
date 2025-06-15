@@ -2,6 +2,7 @@ import httpx
 import pandas as pd
 from ta.trend import ADXIndicator
 from ta.volatility import BollingerBands
+from ta.momentum import CMOIndicator
 from ta.trend import PSARIndicator
 
 BYBIT_URL = "https://api.bybit.com/v5/market/kline"
@@ -9,15 +10,6 @@ TICKERS = [
     "BTCUSDT", "ETHUSDT", "AAVEUSDT", "SOLUSDT", "XMRUSDT",
     "TONUSDT", "NEARUSDT", "LTCUSDT", "APTUSDT", "WLDUSDT"
 ]
-
-def compute_cmo(close: pd.Series, window: int = 14) -> pd.Series:
-    diff = close.diff()
-    up = diff.clip(lower=0)
-    down = -diff.clip(upper=0)
-    sum_up = up.rolling(window=window).sum()
-    sum_down = down.rolling(window=window).sum()
-    cmo = 100 * (sum_up - sum_down) / (sum_up + sum_down)
-    return cmo
 
 async def get_ohlcv(symbol: str, interval: str, limit: int = 100) -> pd.DataFrame:
     async with httpx.AsyncClient() as client:
@@ -39,22 +31,19 @@ async def check_galilei_signal(symbol: str) -> tuple[bool, dict]:
     df_30m = await get_ohlcv(symbol, "30")
     df_5m = await get_ohlcv(symbol, "5")
 
-    # Условие 1: Закрытие ниже нижней полосы Боллинджера
     bb = BollingerBands(close=df_1h["close"], window=20, window_dev=2)
     lower_band = bb.bollinger_lband().iloc[-1]
     close_1h = df_1h["close"].iloc[-1]
     condition1 = close_1h <= lower_band
 
-    # Условие 2: CMO < -55 (ручной расчёт)
-    cmo_val = compute_cmo(df_30m["close"]).iloc[-1]
+    cmo = CMOIndicator(close=df_30m["close"], window=14)
+    cmo_val = cmo.cmo().iloc[-1]
     condition2 = cmo_val < -55
 
-    # Условие 3: ADX > 35
     adx = ADXIndicator(high=df_30m["high"], low=df_30m["low"], close=df_30m["close"], window=14)
     adx_val = adx.adx().iloc[-1]
     condition3 = adx_val > 35
 
-    # Условие 4: PSAR под ценой
     psar = PSARIndicator(high=df_5m["high"], low=df_5m["low"], close=df_5m["close"])
     psar_val = psar.psar().iloc[-1]
     close_psar = df_5m["close"].iloc[-1]
