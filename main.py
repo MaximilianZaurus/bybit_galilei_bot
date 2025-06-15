@@ -14,7 +14,7 @@ app = FastAPI()
 async def startup_event():
     asyncio.create_task(start_scheduler())
 
-@app.post(f"/webhook/{os.getenv('TELEGRAM_TOKEN')}")
+@app.post(f"/webhook/{os.getenv('BOT_TOKEN')}")
 async def telegram_webhook(req: Request):
     update = await req.json()
     await telegram_app.update(update)
