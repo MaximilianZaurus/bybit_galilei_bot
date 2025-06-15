@@ -1,7 +1,7 @@
 import os
 from fastapi import FastAPI, Request
 from telegram import Update, Bot
-from telegram.ext import Application, CallbackContext, ApplicationBuilder
+from telegram.ext import Application, ApplicationBuilder
 from scheduler import setup_scheduler
 from dotenv import load_dotenv
 
@@ -9,13 +9,13 @@ load_dotenv()
 
 TOKEN = os.getenv("TELEGRAM_TOKEN")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL")
-ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID")
+CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
 bot = Bot(token=TOKEN)
 app = FastAPI()
-
 application = ApplicationBuilder().token(TOKEN).build()
-setup_scheduler(bot)
+
+setup_scheduler(bot, CHAT_ID)
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
