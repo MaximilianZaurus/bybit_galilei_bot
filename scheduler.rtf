@@ -1,0 +1,91 @@
+{\rtf1\ansi\ansicpg1251\cocoartf2822
+\cocoatextscaling0\cocoaplatform0{\fonttbl\f0\fswiss\fcharset0 Helvetica;}
+{\colortbl;\red255\green255\blue255;}
+{\*\expandedcolortbl;;}
+\paperw11900\paperh16840\margl1440\margr1440\vieww11520\viewh8400\viewkind0
+\pard\tx720\tx1440\tx2160\tx2880\tx3600\tx4320\tx5040\tx5760\tx6480\tx7200\tx7920\tx8640\pardirnatural\partightenfactor0
+
+\f0\fs24 \cf0 import asyncio\
+import json\
+import logging\
+import pandas as pd\
+import httpx\
+from apscheduler.schedulers.asyncio import AsyncIOScheduler\
+\
+from bot import send_message  # \uc0\u1040 \u1089 \u1080 \u1085 \u1093 \u1088 \u1086 \u1085 \u1085 \u1072 \u1103  \u1092 \u1091 \u1085 \u1082 \u1094 \u1080 \u1103  \u1086 \u1090 \u1087 \u1088 \u1072 \u1074 \u1082 \u1080  \u1089 \u1086 \u1086 \u1073 \u1097 \u1077 \u1085 \u1080 \u1103  \u1074  Telegram\
+from signals import analyze_signal\
+\
+logging.basicConfig(level=logging.INFO)\
+logger = logging.getLogger(__name__)\
+\
+TIMEFRAME = '15'  # 15 \uc0\u1084 \u1080 \u1085 \u1091 \u1090 \u1085 \u1099 \u1077  \u1089 \u1074 \u1077 \u1095 \u1080 \
+API_URL = 'https://api.bybit.com/public/linear/kline'\
+\
+\
+def load_tickers():\
+    """\uc0\u1047 \u1072 \u1075 \u1088 \u1091 \u1078 \u1072 \u1077 \u1090  \u1090 \u1080 \u1082 \u1077 \u1088 \u1099  \u1080 \u1079  \u1092 \u1072 \u1081 \u1083 \u1072  tickers.json"""\
+    with open('tickers.json', 'r') as f:\
+        return json.load(f)\
+\
+\
+async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:\
+    """\uc0\u1040 \u1089 \u1080 \u1085 \u1093 \u1088 \u1086 \u1085 \u1085 \u1086  \u1079 \u1072 \u1087 \u1088 \u1072 \u1096 \u1080 \u1074 \u1072 \u1077 \u1090  \u1089 \u1074 \u1077 \u1095 \u1085 \u1099 \u1077  \u1076 \u1072 \u1085 \u1085 \u1099 \u1077  \u1089  Bybit \u1080  \u1074 \u1086 \u1079 \u1074 \u1088 \u1072 \u1097 \u1072 \u1077 \u1090  DataFrame"""\
+    params = \{\
+        'symbol': ticker,\
+        'interval': TIMEFRAME,\
+        'limit': limit\
+    \}\
+    async with httpx.AsyncClient(timeout=10) as client:\
+        resp = await client.get(API_URL, params=params)\
+        resp.raise_for_status()\
+        data = resp.json()\
+\
+    if data.get('ret_code', 1) != 0:\
+        raise Exception(f"API Error for \{ticker\}: \{data.get('ret_msg')\}")\
+\
+    klines = data['result']\
+    df = pd.DataFrame(klines)\
+    df = df[['open_time', 'open', 'high', 'low', 'close', 'volume']]\
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='s')\
+    for col in ['open', 'high', 'low', 'close', 'volume']:\
+        df[col] = pd.to_numeric(df[col])\
+    return df\
+\
+\
+async def analyze_and_send():\
+    tickers = load_tickers()\
+    messages = []\
+\
+    for ticker in tickers:\
+        try:\
+            df = await fetch_klines(ticker)\
+            signals = analyze_signal(df)\
+            d = signals['details']\
+\
+            msg = (\
+                f"\uc0\u55357 \u56520  <b>\{ticker\}</b>\\n"\
+                f"\uc0\u1062 \u1077 \u1085 \u1072 : \{d['close']:.4f\}\\n"\
+                f"RSI: \{d['rsi']:.2f\} | CCI: \{d['cci']:.2f\} | MACD Hist: \{d['macd_hist']:.4f\}\\n"\
+                f"Bollinger Bands: [\{d['bb_lower']:.4f\} - \{d['bb_upper']:.4f\}]\\n"\
+                f"\uc0\u1054 \u1073 \u1098 \u1105 \u1084 : \{d['volume']:.2f\} (\u1089 \u1088 \u1077 \u1076 \u1085 \u1080 \u1081 : \{d['volume_ma']:.2f\})\\n\\n"\
+                f"\uc0\u1057 \u1080 \u1075 \u1085 \u1072 \u1083 \u1099 :\\n"\
+                f"\uc0\u9654 \u65039  \u1042 \u1093 \u1086 \u1076  \u1074  \u1051 \u1086 \u1085 \u1075 : \{'\u9989 ' if signals['long_entry'] else '\u10060 '\}\\n"\
+                f"\uc0\u9209  \u1042 \u1099 \u1093 \u1086 \u1076  \u1080 \u1079  \u1051 \u1086 \u1085 \u1075 \u1072 : \{'\u9989 ' if signals['long_exit'] else '\u10060 '\}\\n"\
+                f"\uc0\u9654 \u65039  \u1042 \u1093 \u1086 \u1076  \u1074  \u1064 \u1086 \u1088 \u1090 : \{'\u9989 ' if signals['short_entry'] else '\u10060 '\}\\n"\
+                f"\uc0\u9209  \u1042 \u1099 \u1093 \u1086 \u1076  \u1080 \u1079  \u1064 \u1086 \u1088 \u1090 \u1072 : \{'\u9989 ' if signals['short_exit'] else '\u10060 '\}\\n"\
+            )\
+            messages.append(msg)\
+        except Exception as e:\
+            logger.error(f"\uc0\u1054 \u1096 \u1080 \u1073 \u1082 \u1072  \u1087 \u1088 \u1080  \u1086 \u1073 \u1088 \u1072 \u1073 \u1086 \u1090 \u1082 \u1077  \{ticker\}: \{e\}")\
+            messages.append(f"\uc0\u1054 \u1096 \u1080 \u1073 \u1082 \u1072  \u1089  \{ticker\}: \{e\}")\
+\
+    final_message = "\\n\\n".join(messages)\
+    await send_message(final_message)\
+\
+\
+def start_scheduler():\
+    scheduler = AsyncIOScheduler()\
+    scheduler.add_job(lambda: asyncio.create_task(analyze_and_send()), 'interval', minutes=15)\
+    scheduler.start()\
+    logger.info("Scheduler started, running every 15 minutes")\
+}
