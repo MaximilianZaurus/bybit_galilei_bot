@@ -1,6 +1,4 @@
-{
-  "tickers": [
-    "HTCUSDT",
-    "ETHUSDT"
-  ]
-}
+[
+  "HTCUSDT",
+  "ETHUSDT"
+]
