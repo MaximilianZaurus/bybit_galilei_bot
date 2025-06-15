@@ -15,7 +15,7 @@ bot = Bot(token=TOKEN)
 app = FastAPI()
 application = ApplicationBuilder().token(TOKEN).build()
 
-setup_scheduler(bot, CHAT_ID)
+start_scheduler(bot, CHAT_ID)
 
 @app.post("/webhook")
 async def webhook_handler(request: Request):
