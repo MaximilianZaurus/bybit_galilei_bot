@@ -1,17 +1,13 @@
 services:
   - type: web
-    name: bybit-liquidation-webhook
-    env: python
+    name: galilei-bot
+    runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: uvicorn liquidation_alert_bot:app --host 0.0.0.0 --port 10000
+    startCommand: uvicorn main:app --host 0.0.0.0 --port 10000
     envVars:
-      - key: API_TOKEN
-        value: 8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA
-      - key: WEBHOOK_SECRET
-        value: secret123
-      - key: WEBHOOK_URL
-        value: https://bybit-liquidations.onrender.com/webhook/secret123
       - key: TELEGRAM_TOKEN
-        value: 8054456169:AAFam6kFVbW6GJFZjNCip18T-geGUAk4kwA
+        sync: false
       - key: TELEGRAM_CHAT_ID
-        value: "5309903897"
+        sync: false
+      - key: WEBHOOK_URL
+        sync: false
