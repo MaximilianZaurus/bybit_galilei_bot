@@ -7,3 +7,4 @@ uvicorn
 apscheduler
 python-telegram-bot>=20
 websockets>=11.0
+python-dotenv
