@@ -1,0 +1,23 @@
+# main.py
+import os
+from fastapi import FastAPI, Request
+from bot import application
+from telegram import Update
+from telegram.ext import Application
+import logging
+
+app = FastAPI()
+
+BOT_TOKEN = os.getenv("TELEGRAM_TOKEN")
+WEBHOOK_URL = os.getenv("WEBHOOK_URL")
+
+@app.on_event("startup")
+async def setup_webhook():
+    await application.bot.set_webhook(url=f"{WEBHOOK_URL}/webhook")
+
+@app.post("/webhook")
+async def telegram_webhook(req: Request):
+    data = await req.json()
+    update = Update.de_json(data, application.bot)
+    await application.process_update(update)
+    return {"status": "ok"}
