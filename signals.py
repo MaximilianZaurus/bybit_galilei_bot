@@ -27,30 +27,34 @@ async def get_ohlcv(symbol: str, interval: str, limit: int = 100) -> pd.DataFram
         df["open"] = pd.to_numeric(df["open"])
         return df.reset_index(drop=True)
 
-async def check_galilei_signal(symbol: str) -> bool:
+async def check_galilei_signal(symbol: str) -> tuple[bool, dict]:
     df_1h = await get_ohlcv(symbol, "60")
     df_30m = await get_ohlcv(symbol, "30")
     df_5m = await get_ohlcv(symbol, "5")
 
-    # Условие 1: Bollinger lower band touch (1h)
     bb = BollingerBands(close=df_1h["close"], window=20, window_dev=2)
-    if df_1h["close"].iloc[-1] > bb.bollinger_lband().iloc[-1]:
-        return False
+    lower_band = bb.bollinger_lband().iloc[-1]
+    close_1h = df_1h["close"].iloc[-1]
+    condition1 = close_1h <= lower_band
 
-    # Условие 2: CMO < -55 (30m)
     cmo = CMOIndicator(close=df_30m["close"], window=14)
-    if cmo.cmo().iloc[-1] > -55:
-        return False
+    cmo_val = cmo.cmo().iloc[-1]
+    condition2 = cmo_val < -55
 
-    # Условие 3: ADX > 35 (30m)
     adx = ADXIndicator(high=df_30m["high"], low=df_30m["low"], close=df_30m["close"], window=14)
-    if adx.adx().iloc[-1] < 35:
-        return False
+    adx_val = adx.adx().iloc[-1]
+    condition3 = adx_val > 35
 
-    # Условие 4: Parabolic SAR разворот вверх (5m)
     psar = PSARIndicator(high=df_5m["high"], low=df_5m["low"], close=df_5m["close"])
-    last_psar = psar.psar().iloc[-1]
-    if last_psar > df_5m["close"].iloc[-1]:
-        return False
+    psar_val = psar.psar().iloc[-1]
+    close_psar = df_5m["close"].iloc[-1]
+    condition4 = psar_val < close_psar
 
-    return True
+    all_conditions = condition1 and condition2 and condition3 and condition4
+
+    return all_conditions, {
+        "cmo": cmo_val,
+        "adx": adx_val,
+        "psar": psar_val,
+        "close_psar": close_psar
+    }
