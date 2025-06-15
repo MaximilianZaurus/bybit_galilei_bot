@@ -101,6 +101,7 @@ def start_scheduler():
 @app.on_event("startup")
 async def on_startup():
     start_scheduler()
+    await send_message("🚀 Бот запущен и работает. Первый анализ будет через 15 минут.")
 
 @app.get("/")
 async def root():
