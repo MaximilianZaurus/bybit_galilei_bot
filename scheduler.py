@@ -1,4 +1,3 @@
-# scheduler.py
 import asyncio
 import json
 import logging
@@ -8,8 +7,8 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from fastapi import FastAPI
 
-from bot import send_message       # твоя асинхронная функция отправки сообщения в Telegram
-from signals import analyze_signal # твоя функция анализа сигналов
+from bot import send_message       # асинхронная функция отправки сообщения в Telegram
+from signals import analyze_signal # функция анализа сигналов
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -37,16 +36,17 @@ async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
         resp.raise_for_status()
         data = resp.json()
 
-    if data.get('ret_code', 1) != 0:
-        raise Exception(f"API Error for {ticker}: {data.get('ret_msg')}")
+    if data.get('retCode', 1) != 0:
+        raise Exception(f"API Error for {ticker}: {data.get('retMsg')}")
 
-    klines = data['result']['list']
-    df = pd.DataFrame(klines, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume',
-        '_1', '_2', '_3', '_4', '_5', '_6'
-    ])
+    klines = data.get('result', {}).get('list', [])
+    if not klines:
+        raise Exception(f"No kline data returned for {ticker}")
+
+    df = pd.DataFrame(klines)
+    df.columns = ['open_time', 'open', 'high', 'low', 'close', 'volume'] + [f"extra_{i}" for i in range(len(df.columns) - 6)]
     df = df[['open_time', 'open', 'high', 'low', 'close', 'volume']]
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='s')
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume']:
         df[col] = pd.to_numeric(df[col])
     return df
