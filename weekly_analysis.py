@@ -31,12 +31,12 @@ def get_klines(symbol, interval='1h', limit=168):
         df[col] = df[col].astype(float)
     return df
 
-# ✅ Open Interest (история, фикс!)
+# ✅ Open Interest (v5: через intervalTime)
 def get_open_interest(symbol, interval='1h'):
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        intervalTime=interval  # ✅ ключ исправлен!
+        intervalTime=interval
     )
     if res['retCode'] != 0:
         raise Exception(f"OI API error: {res['retMsg']}")
@@ -45,23 +45,22 @@ def get_open_interest(symbol, interval='1h'):
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
-# ✅ Трейды
+# ✅ Трейды (по v5 get_trade_history)
 def get_trades(symbol, start_time, end_time):
-    res = session.get_public_trading_records(
+    res = session.get_trade_history(
         category="linear",
-        symbol=symbol,
-        limit=1000
+        symbol=symbol
     )
     if res['retCode'] != 0:
         raise Exception(f"Trade API error: {res['retMsg']}")
     df = pd.DataFrame(res['result']['list'])
     df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
-    df['qty'] = df['qty'].astype(float)
+    df['qty'] = df['execQty'].astype(float)
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
-# ✅ CVD (на основе трейдов)
+# ✅ CVD (по трейдам)
 def calculate_cvd(trades_df):
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
@@ -79,7 +78,7 @@ def analyze_single_symbol(symbol: str) -> str:
     week_ago = now - timedelta(days=7)
 
     df = get_klines(symbol, interval='1h', limit=168)
-    oi_df = get_open_interest(symbol, interval='1h')  # ⬅️ FIX: убран limit
+    oi_df = get_open_interest(symbol, interval='1h')
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
