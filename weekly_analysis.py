@@ -25,11 +25,12 @@ def get_klines(symbol, interval='60', limit=200):
         raise Exception(f"Kline error for {symbol}: {res['retMsg']}")
 
     raw_list = res['result']['list']
+    if len(raw_list) < 20:
+        raise ValueError("Недостаточно данных от Kline")
 
     df = pd.DataFrame(raw_list, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
     ])
-
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
@@ -44,7 +45,11 @@ def get_open_interest(symbol, interval='60', limit=168):
     )
     if res['retCode'] != 0:
         raise Exception(f"OI error for {symbol}: {res['retMsg']}")
+
     raw = res['result']['list']
+    if len(raw) < 2:
+        raise ValueError("Недостаточно данных для Open Interest")
+
     df = pd.DataFrame(raw, columns=["timestamp", "oi"])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
     df['oi'] = df['oi'].astype(float)
@@ -58,7 +63,11 @@ def get_trades(symbol, limit=1000):
     )
     if res['retCode'] != 0:
         raise Exception(f"Trades error for {symbol}: {res['retMsg']}")
+
     trades = res['result']['list']
+    if len(trades) < 2:
+        raise ValueError("Недостаточно трейдов для CVD")
+
     df = pd.DataFrame(trades)
     df['price'] = df['price'].astype(float)
     df['size'] = df['size'].astype(float)
@@ -75,11 +84,19 @@ def analyze_week():
             df = get_klines(symbol, interval='60', limit=168)
             close = df['close']
 
+            # Проверка достаточности данных
+            if len(close) < 20:
+                raise ValueError("Недостаточно данных для RSI/MACD")
+
             rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
             macd = ta.trend.MACD(close)
-            macd_hist = macd.macd_diff().iloc[-1]
-            macd_hist_prev = macd.macd_diff().iloc[-2]
+            macd_hist_series = macd.macd_diff()
 
+            if len(macd_hist_series) < 2:
+                raise ValueError("Недостаточно данных для MACD histogram")
+
+            macd_hist = macd_hist_series.iloc[-1]
+            macd_hist_prev = macd_hist_series.iloc[-2]
             trend = '⏫ Uptrend' if macd_hist > macd_hist_prev else '⏬ Downtrend'
 
             # Open Interest
@@ -97,6 +114,7 @@ def analyze_week():
                 f"OI Δ: {oi_change:.2f} | CVD Δ: {cvd_change:.2f}"
             )
             messages.append(msg)
+
         except Exception as e:
             logger.error(f"Ошибка в анализе {symbol}: {e}")
             messages.append(f"❌ Ошибка анализа {symbol}: {e}")
