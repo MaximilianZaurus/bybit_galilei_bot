@@ -9,8 +9,10 @@ def get_tickers():
     with open("tickers.json", "r") as f:
         return json.load(f)
 
+# ✅ Сессия Bybit
 session = HTTP(testnet=False)
 
+# ✅ KLINES (свечи)
 def get_klines(symbol, interval='1h', limit=168):
     res = session.get_kline(
         category="linear",
@@ -29,12 +31,12 @@ def get_klines(symbol, interval='1h', limit=168):
         df[col] = df[col].astype(float)
     return df
 
-def get_open_interest(symbol, interval='1h', limit=168):
+# ✅ Open Interest (история, фикс!)
+def get_open_interest(symbol, interval='1h'):
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        interval=interval,
-        limit=limit
+        intervalTime=interval  # ✅ ключ исправлен!
     )
     if res['retCode'] != 0:
         raise Exception(f"OI API error: {res['retMsg']}")
@@ -43,6 +45,7 @@ def get_open_interest(symbol, interval='1h', limit=168):
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
+# ✅ Трейды
 def get_trades(symbol, start_time, end_time):
     res = session.get_public_trading_records(
         category="linear",
@@ -58,22 +61,25 @@ def get_trades(symbol, start_time, end_time):
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
+# ✅ CVD (на основе трейдов)
 def calculate_cvd(trades_df):
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
+# ✅ ΔOI (за последние N свечей)
 def calculate_oi_delta(df, window=3):
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
 
+# ✅ Анализ одного тикера
 def analyze_single_symbol(symbol: str) -> str:
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
 
     df = get_klines(symbol, interval='1h', limit=168)
-    oi_df = get_open_interest(symbol, interval='1h', limit=168)
+    oi_df = get_open_interest(symbol, interval='1h')  # ⬅️ FIX: убран limit
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
@@ -89,6 +95,7 @@ def analyze_single_symbol(symbol: str) -> str:
 
     return f"{symbol}: RSI {rsi:.1f}, MACD {macd_hist:.3f} {macd_dir}, ΔOI {oi_delta:.1f}, CVD {cvd:.1f} {trend}"
 
+# ✅ Основной недельный анализ
 def analyze_week() -> str:
     tickers = get_tickers()
     result_lines = ["📊 Weekly Overview:"]
