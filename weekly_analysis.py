@@ -13,32 +13,49 @@ def load_tickers():
 
 def get_klines(symbol, interval='15', limit=200):
     res = session.get_kline(
-        category="linear",  # ← ОБЯЗАТЕЛЬНО в V5
+        category="linear",
         symbol=symbol,
         interval=interval,
         limit=limit
     )
-
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка API: {res.get('retMsg', 'Неизвестная ошибка')}")
 
     kline_list = res['result']['list']
     df = pd.DataFrame(kline_list, columns=[
-        'open_time', 'open', 'high', 'low', 'close',
-        'volume', 'turnover'
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
     ])
     df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
+
+    # Получим Open Interest и добавим в df
+    oi_df = get_open_interest(symbol, interval=interval)
+    df = pd.merge(df, oi_df, on='open_time', how='left')
+
     return df
+
+def get_open_interest(symbol, interval='15'):
+    res = session.get_open_interest(
+        category="linear",
+        symbol=symbol,
+        interval=interval
+    )
+    if res.get('retCode', 1) != 0:
+        raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
+
+    oi_list = res['result']['list']
+    df = pd.DataFrame(oi_list)
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_interest'] = df['openInterest'].astype(float)
+    return df[['open_time', 'open_interest']]
 
 def get_trades(symbol, start_time, end_time, limit=1000):
     res = session.get_public_trading_records(
-        category="linear",  # ← ОБЯЗАТЕЛЬНО
+        category="linear",
         symbol=symbol,
         limit=limit
     )
-
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка API trades: {res.get('retMsg', 'Неизвестная ошибка')}")
 
@@ -48,7 +65,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['price'] = df['price'].astype(float)
     df['qty'] = df['qty'].astype(float)
-    df['isBuyerMaker'] = df['side'] == 'Sell'  # Покупатель с мейкером — это продажа
+    df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
 def calculate_cvd(trades_df):
@@ -57,8 +74,9 @@ def calculate_cvd(trades_df):
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    # Временно заглушка, так как нет OI в get_kline — можно отдельно запросить OI позже
-    return 0
+    if len(df) < window + 1 or 'open_interest' not in df.columns:
+        return 0
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
 
 def analyze_week(symbol):
     now = datetime.utcnow()
