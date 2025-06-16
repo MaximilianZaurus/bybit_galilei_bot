@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
 from signals import analyze_signal  # Функция анализа из signals.py
 
+# Создание сессии
 session = HTTP(testnet=False)
 
 def load_tickers():
@@ -52,8 +53,14 @@ def get_open_interest(symbol, interval='15'):
         raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
 
     oi_list = res['result']['list']
+    if not oi_list:
+        raise Exception(f"❌ Пустой список open_interest для {symbol}")
+
+    # Автоопределение ключа времени
+    time_key = 'timestamp' if 'timestamp' in oi_list[0] else 'openTime'
+
     df = pd.DataFrame(oi_list)
-    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_time'] = pd.to_datetime(df[time_key].astype(float), unit='ms')
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
