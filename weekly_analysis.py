@@ -8,9 +8,11 @@ def get_tickers():
     with open("tickers.json", "r") as f:
         return json.load(f)
 
+# Создаем сессию (подключение к реальному API, testnet=False)
 session = HTTP(testnet=False)
 
 def get_klines(symbol, interval='1h', limit=168):
+    # category берём из документации — для линейных контрактов "linear"
     res = session.get_kline(
         category="linear",
         symbol=symbol,
@@ -20,53 +22,60 @@ def get_klines(symbol, interval='1h', limit=168):
     if res['retCode'] != 0:
         raise Exception(f"Kline API error: {res['retMsg']}")
 
+    # Bybit v5 возвращает 'result' -> 'list' с данными, поле времени называется 'start' (в секундах)
     kline_list = res['result']['list']
     df = pd.DataFrame(kline_list)
 
-    # По pybit v5 поле с временем свечи - 'start' (timestamp в секундах)
+    # Конвертируем время свечи из секунд в datetime
     df['open_time'] = pd.to_datetime(df['start'].astype(int), unit='s')
 
-    # Приведение колонок к float (поля могут называться так)
+    # Приводим колонки к float
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         if col in df.columns:
             df[col] = df[col].astype(float)
         else:
-            # Иногда turnover может отсутствовать, добавим для безопасности
             if col == 'turnover':
                 df['turnover'] = 0.0
 
-    # Возвращаем только нужные колонки, если они есть
+    # Возвращаем только необходимые колонки
     columns = ['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']
     columns = [c for c in columns if c in df.columns]
     return df[columns]
 
 def get_open_interest(symbol, interval='1h'):
+    # По документации, intervalTime нужен в формате ISO 8601, например '1h', '15m', '1d'
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
         intervalTime=interval
     )
     if res['retCode'] != 0:
-        raise Exception(f"OI API error: {res['retMsg']}")
+        raise Exception(f"Open Interest API error: {res['retMsg']}")
 
-    df = pd.DataFrame(res['result']['list'])
+    oi_list = res['result']['list']
+    df = pd.DataFrame(oi_list)
+    # Время в поле 'timestamp' в миллисекундах
     df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
 def get_trades(symbol, start_time, end_time):
+    # Получаем историю сделок (limit 1000)
     res = session.get_trade_history(
         category="linear",
         symbol=symbol,
         limit=1000
     )
     if res['retCode'] != 0:
-        raise Exception(f"Trade API error: {res['retMsg']}")
+        raise Exception(f"Trade History API error: {res['retMsg']}")
 
-    df = pd.DataFrame(res['result']['list'])
+    trades = res['result']['list']
+    df = pd.DataFrame(trades)
+    # Время сделок в миллисекундах
     df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['qty'] = df['execQty'].astype(float)
+    # isBuyerMaker True, если сделка была сделана маркет-мейкером, то есть side == "Sell"
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
@@ -86,10 +95,12 @@ def analyze_single_symbol(symbol: str) -> str:
 
     df = get_klines(symbol, interval='1h', limit=168)
     oi_df = get_open_interest(symbol, interval='1h')
+
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
     trades_df = get_trades(symbol, week_ago, now)
+
     cvd = calculate_cvd(trades_df)
     oi_delta = calculate_oi_delta(df)
 
