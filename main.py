@@ -2,6 +2,8 @@ import os
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 
+from datetime import datetime
+
 from bot import telegram_app              # Объект Application от python-telegram-bot
 from scheduler import start_scheduler     # Планировщик фоновых задач (analyze_and_send)
 
@@ -15,10 +17,19 @@ app = FastAPI()
 
 
 @app.on_event("startup")
-async def startup_event():
-    start_scheduler()  # Запускаем планировщик при старте
-    print("✅ Bot scheduler started")
+async def on_startup():
+    try:
+        now = datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')
+        await send_message(f"🚀 Бот запущен в {now} UTC. Первый анализ будет через 15 минут.")
+        logger.info("Startup message sent")
 
+        # Запускаем планировщик только после успешной отправки
+        start_scheduler()
+
+        logger.info("Scheduler started")
+    except Exception as e:
+        logger.error(f"Error on startup: {e}")
+        traceback.print_exc(file=sys.stdout)
 
 @app.post(f"/webhook/{BOT_TOKEN}")
 async def telegram_webhook(req: Request):
