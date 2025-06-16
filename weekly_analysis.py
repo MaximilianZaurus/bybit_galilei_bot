@@ -24,6 +24,8 @@ def get_klines(symbol, interval='1h', limit=168):
         raise Exception(f"Kline API error: {res['retMsg']}")
 
     kline_list = res['result']['list']
+    if not kline_list:
+        raise Exception("Kline data is empty")
 
     # Обработка: список списков или список словарей
     if isinstance(kline_list[0], list):
@@ -55,9 +57,11 @@ def get_open_interest(symbol, interval='1h'):
     if res['retCode'] != 0:
         raise Exception(f"OI API error: {res['retMsg']}")
 
+    if not res['result']['list']:
+        raise Exception("Open Interest data is empty")
+
     df = pd.DataFrame(res['result']['list'])
 
-    # Проверка на корректность данных
     if 'timestamp' not in df or 'openInterest' not in df:
         raise Exception("Invalid OI response format")
 
@@ -74,6 +78,9 @@ def get_trades(symbol, start_time, end_time):
     )
     if res['retCode'] != 0:
         raise Exception(f"Trade API error: {res['retMsg']}")
+
+    if not res['result']['list']:
+        raise Exception("Trade history is empty")
 
     df = pd.DataFrame(res['result']['list'])
 
