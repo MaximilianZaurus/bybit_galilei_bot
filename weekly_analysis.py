@@ -4,12 +4,15 @@ import ta
 import json
 from datetime import datetime, timedelta
 
+# ✅ Загрузка тикеров
 def get_tickers():
     with open("tickers.json", "r") as f:
         return json.load(f)
 
+# ✅ Сессия Bybit
 session = HTTP(testnet=False)
 
+# ✅ Получение свечей (v5)
 def get_klines(symbol, interval='1h', limit=168):
     res = session.get_kline(
         category="linear",
@@ -22,25 +25,20 @@ def get_klines(symbol, interval='1h', limit=168):
 
     kline_list = res['result']['list']
     df = pd.DataFrame(kline_list)
+    df['open_time'] = pd.to_datetime(df['start'].astype(int), unit='s')
 
-    # По pybit v5 поле с временем свечи - 'start' (timestamp в секундах)
-    if 'start' in df.columns:
-        df['open_time'] = pd.to_datetime(df['start'].astype(int), unit='s')
+    # Приведение к числам
+    numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+    for col in numeric_cols:
+        df[col] = df[col].astype(float)
+    if 'turnover' in df.columns:
+        df['turnover'] = df['turnover'].astype(float)
     else:
-        raise Exception("Нет поля 'start' в данных свечей")
+        df['turnover'] = 0.0
 
-    # Приведение колонок к float (поля могут называться так)
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
-        if col in df.columns:
-            df[col] = df[col].astype(float)
-        else:
-            if col == 'turnover':
-                df['turnover'] = 0.0  # Добавим, если отсутствует
+    return df[['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']]
 
-    columns = ['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']
-    columns = [c for c in columns if c in df.columns]
-    return df[columns]
-
+# ✅ Получение OI (v5)
 def get_open_interest(symbol, interval='1h'):
     res = session.get_open_interest(
         category="linear",
@@ -51,14 +49,11 @@ def get_open_interest(symbol, interval='1h'):
         raise Exception(f"OI API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    # В ответе поле timestamp в миллисекундах
-    if 'timestamp' not in df.columns or 'openInterest' not in df.columns:
-        raise Exception("Нет нужных полей в OI ответе")
-
-    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='s')  # SECONDS
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
+# ✅ Получение трейдов (v5)
 def get_trades(symbol, start_time, end_time):
     res = session.get_trade_history(
         category="linear",
@@ -69,26 +64,25 @@ def get_trades(symbol, start_time, end_time):
         raise Exception(f"Trade API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    if 'execTime' not in df.columns or 'execQty' not in df.columns or 'side' not in df.columns:
-        raise Exception("Некорректные данные трейдов")
-
-    df['trade_time'] = pd.to_datetime(df['execTime'].astype(int), unit='ms')
+    df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')  # MILLISECONDS
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
-
     df['qty'] = df['execQty'].astype(float)
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
+# ✅ CVD
 def calculate_cvd(trades_df):
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
+# ✅ ΔOI
 def calculate_oi_delta(df, window=3):
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
 
+# ✅ Анализ по одному символу
 def analyze_single_symbol(symbol: str) -> str:
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
@@ -110,6 +104,7 @@ def analyze_single_symbol(symbol: str) -> str:
 
     return f"{symbol}: RSI {rsi:.1f}, MACD {macd_hist:.3f} {macd_dir}, ΔOI {oi_delta:.1f}, CVD {cvd:.1f} {trend}"
 
+# ✅ Основной анализ
 def analyze_week() -> str:
     tickers = get_tickers()
     result_lines = ["📊 Weekly Overview:"]
@@ -121,5 +116,6 @@ def analyze_week() -> str:
             result_lines.append(f"{symbol}: ❌ Ошибка анализа: {e}")
     return "\n".join(result_lines)
 
+# ✅ Точка входа
 if __name__ == "__main__":
     print(analyze_week())
