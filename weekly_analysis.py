@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from pybit.unified_trading import HTTP
 import ta
 import logging
@@ -10,11 +10,25 @@ logger = logging.getLogger(__name__)
 
 session = HTTP(testnet=False)
 
+INTERVAL_MAP = {
+    '1': '1m',
+    '3': '3m',
+    '5': '5m',
+    '15': '15m',
+    '30': '30m',
+    '60': '1h',
+    '120': '2h',
+    '240': '4h',
+    '360': '6h',
+    '720': '12h',
+    'D': '1d'
+}
+
 def load_tickers(path="tickers.json"):
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
-def get_klines(symbol, interval='60', limit=200):
+def get_klines(symbol, interval='15', limit=672):  # 15 мин * 672 = 7 дней
     res = session.get_kline(
         category="linear",
         symbol=symbol,
@@ -36,11 +50,15 @@ def get_klines(symbol, interval='60', limit=200):
         df[col] = df[col].astype(float)
     return df
 
-def get_open_interest(symbol, interval='60', limit=168):
+def get_open_interest(symbol, interval='15', limit=672):
+    interval_str = INTERVAL_MAP.get(str(interval))
+    if not interval_str:
+        raise ValueError(f"Неподдерживаемый интервал для OI: {interval}")
+
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        intervalTime=interval,
+        intervalTime=interval_str,
         limit=limit
     )
     if res['retCode'] != 0:
@@ -81,10 +99,9 @@ def analyze_week():
 
     for symbol in tickers:
         try:
-            df = get_klines(symbol, interval='60', limit=168)
+            df = get_klines(symbol, interval='15', limit=672)
             close = df['close']
 
-            # Проверка достаточности данных
             if len(close) < 20:
                 raise ValueError("Недостаточно данных для RSI/MACD")
 
@@ -99,11 +116,9 @@ def analyze_week():
             macd_hist_prev = macd_hist_series.iloc[-2]
             trend = '⏫ Uptrend' if macd_hist > macd_hist_prev else '⏬ Downtrend'
 
-            # Open Interest
-            oi_df = get_open_interest(symbol, interval='60', limit=168)
+            oi_df = get_open_interest(symbol, interval='15', limit=672)
             oi_change = oi_df['oi'].iloc[-1] - oi_df['oi'].iloc[-2]
 
-            # Real CVD via trades
             trades_df = get_trades(symbol, limit=1000)
             cvd_change = trades_df['cvd'].iloc[-1] - trades_df['cvd'].iloc[-2]
 
