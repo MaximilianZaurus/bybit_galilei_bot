@@ -8,4 +8,4 @@ apscheduler
 python-telegram-bot>=20
 websockets>=11.0
 python-dotenv
-pybit==3.1.0
+pybit
