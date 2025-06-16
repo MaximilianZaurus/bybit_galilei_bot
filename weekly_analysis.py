@@ -11,7 +11,7 @@ def load_tickers():
         return json.load(f)
 
 def get_klines(symbol, interval='15', limit=200):
-    res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
+    res = session.get_kline(symbol=symbol, interval=interval, limit=limit)
     if res['ret_code'] != 0:
         raise Exception(f"Ошибка API: {res['ret_msg']}")
     df = pd.DataFrame(res['result'])
@@ -21,7 +21,7 @@ def get_klines(symbol, interval='15', limit=200):
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.query_recent_trading_records(symbol=symbol, limit=limit)
+    res = session.get_recent_trades(symbol=symbol, limit=limit)
     if res['ret_code'] != 0:
         raise Exception(f"Ошибка API trades: {res['ret_msg']}")
     trades_df = pd.DataFrame(res['result'])
