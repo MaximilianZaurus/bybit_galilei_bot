@@ -62,27 +62,30 @@ def analyze_signal(df, cvd=0, oi_delta=0):
     macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
     adx = ta.trend.ADXIndicator(high, low, close, window=14).adx().iloc[-1]
 
+    # Для сравнения с предыдущим баром
+    macd_hist_prev = ta.trend.MACD(close).macd_diff().iloc[-2]
+
     long_entry = (
         (adx > 20) and
         (rsi < 35) and
-        (macd_hist < 0 and macd_hist > ta.trend.MACD(close).macd_diff().iloc[-2]) and
+        (macd_hist < 0 and macd_hist > macd_hist_prev) and
         (cvd > 0) and
         (oi_delta > 0)
     )
     long_exit = (
         (adx > 20) and
-        (rsi > 60 or macd_hist < ta.trend.MACD(close).macd_diff().iloc[-2])
+        (rsi > 60 or macd_hist < macd_hist_prev)
     )
     short_entry = (
         (adx > 20) and
         (rsi > 65) and
-        (macd_hist > 0 and macd_hist < ta.trend.MACD(close).macd_diff().iloc[-2]) and
+        (macd_hist > 0 and macd_hist < macd_hist_prev) and
         (cvd < 0) and
         (oi_delta < 0)
     )
     short_exit = (
         (adx > 20) and
-        (rsi < 40 or macd_hist > ta.trend.MACD(close).macd_diff().iloc[-2])
+        (rsi < 40 or macd_hist > macd_hist_prev)
     )
 
     return {
