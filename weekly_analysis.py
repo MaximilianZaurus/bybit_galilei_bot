@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
 from signals import analyze_signal  # твоя функция из signals.py
 
-session = HTTP(endpoint="https://api.bybit.com")
+session = HTTP()
 
 def load_tickers():
     with open('tickers.json', 'r', encoding='utf-8') as f:
