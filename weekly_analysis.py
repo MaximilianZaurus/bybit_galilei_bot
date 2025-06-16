@@ -1,99 +1,168 @@
-import json
-import pandas as pd
-from datetime import datetime
 from pybit.unified_trading import HTTP
+import pandas as pd
 import ta
-import logging
+from datetime import datetime, timedelta
 
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("weekly_analysis")
+# Инициализация сессии Bybit v5 (реальный рынок)
+session = HTTP(testnet=False)  # testnet=True если нужна тестовая сеть
 
-session = HTTP(testnet=False)
+def get_klines(symbol, interval='1h', limit=200):
+    res = session.get_kline(
+        category="linear",
+        symbol=symbol,
+        interval=interval,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API: {res['retMsg']}")
 
-INTERVAL_MAP = {
-    "1": "1m",
-    "3": "3m",
-    "5": "5m",
-    "15": "15m",
-    "30": "30m",
-    "60": "1h",
-    "120": "2h",
-    "240": "4h",
-    "360": "6h",
-    "720": "12h",
-    "D": "1d"
-}
-
-def load_tickers(path="tickers.json"):
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-def get_klines(symbol, interval="15", limit=672):
-    res = session.get_kline(category="linear", symbol=symbol, interval=interval, limit=limit)
-    if res.get("retCode", 1) != 0:
-        raise Exception(f"Kline error for {symbol}: {res.get('retMsg')}")
-    df = pd.DataFrame(res["result"]["list"], columns=["open_time", "open", "high", "low", "close", "volume", "turnover"])
-    df["open_time"] = pd.to_datetime(df["open_time"].astype(float), unit="ms")
-    for c in ["open", "high", "low", "close", "volume", "turnover"]:
-        df[c] = df[c].astype(float)
+    kline_list = res['result']['list']
+    df = pd.DataFrame(kline_list, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
+    ])
+    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
+        df[col] = df[col].astype(float)
     return df
 
-def get_open_interest(symbol, interval="60", limit=168):
-    interval_str = INTERVAL_MAP.get(str(interval))
-    if not interval_str:
-        raise ValueError(f"Unsupported interval for Open Interest: {interval}")
+def get_open_interest(symbol, interval='1h', limit=200):
+    res = session.get_open_interest(
+        category="linear",
+        symbol=symbol,
+        interval=interval,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API OI: {res['retMsg']}")
 
-    try:
-        res = session.get_open_interest(
-            category="linear",
-            symbol=symbol,
-            intervalTime=interval_str,
-            limit=limit
-        )
-        if res.get("retCode", 1) != 0:
-            logger.error(f"[OI ERROR] Symbol: {symbol}, Interval: {interval_str}, Error: {res.get('retMsg')}")
-            return None
-        raw = res["result"]["list"]
-        if len(raw) < 2:
-            logger.warning(f"[OI WARNING] Not enough data for {symbol} ({interval_str}): {len(raw)} points")
-            return None
-        df = pd.DataFrame(raw)
-        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
-        df["openInterest"] = df["openInterest"].astype(float)
-        return df
-    except Exception as e:
-        logger.exception(f"[OI EXCEPTION] Symbol: {symbol}, Interval: {interval_str}, Exception: {e}")
-        return None
+    oi_data = res['result']['list']
+    df = pd.DataFrame(oi_data)
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_interest'] = df['openInterest'].astype(float)
+    return df[['open_time', 'open_interest']]
 
-def analyze_week():
-    tickers = load_tickers()
-    msgs = []
-    for sym in tickers:
-        try:
-            kl = get_klines(sym)
-            if len(kl) < 20:
-                raise Exception("мало свечей")
-            close = kl["close"]
-            rsi = ta.momentum.RSIIndicator(close, 14).rsi().iloc[-1]
-            macd = ta.trend.MACD(close).macd_diff()
-            if len(macd) < 2:
-                raise Exception("мало MACD")
-            mh, mprev = macd.iloc[-1], macd.iloc[-2]
-            trend = "↑" if mh > mprev else "↓"
+def get_trades(symbol, start_time, end_time, limit=1000):
+    res = session.get_public_trading_records(
+        category="linear",
+        symbol=symbol,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API trades: {res['retMsg']}")
 
-            oi = get_open_interest(sym, interval="60", limit=168)
-            if oi is None:
-                oi_d = "N/A"
-            else:
-                oi_d = oi["openInterest"].iloc[-1] - oi["openInterest"].iloc[-2]
+    trade_list = res['result']['list']
+    df = pd.DataFrame(trade_list)
+    df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
+    df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
+    df['price'] = df['price'].astype(float)
+    df['qty'] = df['qty'].astype(float)
+    # "side" == "Sell" значит инициатор продажи, значит isBuyerMaker = True
+    df['isBuyerMaker'] = df['side'] == 'Sell'
+    return df
 
-            msgs.append(
-                f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}"
-            )
-        except Exception as e:
-            logger.error(f"[ANALYZE ERROR] {sym}: {e}")
-            msgs.append(f"{sym}: ❌ {e}")
-    return "Weekly Overview:\n" + "\n".join(msgs)
+def calculate_cvd(trades_df):
+    buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
+    sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
+    return buy_volume - sell_volume
+
+def calculate_oi_delta(df, window=3):
+    if len(df) < window + 1 or 'open_interest' not in df.columns:
+        return 0
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
+
+def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
+    close = df['close']
+    high = df['high']
+    low = df['low']
+
+    rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
+    macd_hist = ta.trend.MACD(close).macd_diff()
+    adx = ta.trend.ADXIndicator(high, low, close, window=14).adx()
+
+    rsi_curr = rsi.iloc[-1]
+    macd_hist_curr = macd_hist.iloc[-1]
+    adx_curr = adx.iloc[-1]
+
+    cvd_positive = cvd > 0
+    cvd_negative = cvd < 0
+    oi_rising = oi_delta > 0
+    oi_falling = oi_delta < 0
+
+    long_entry = (
+        (adx_curr > 20) and
+        (rsi_curr < 35) and
+        (macd_hist_curr < 0 and macd_hist_curr > macd_hist.iloc[-2]) and
+        cvd_positive and
+        oi_rising
+    )
+
+    long_exit = (
+        (adx_curr > 20) and
+        (rsi_curr > 60 or macd_hist_curr < macd_hist.iloc[-2])
+    )
+
+    short_entry = (
+        (adx_curr > 20) and
+        (rsi_curr > 65) and
+        (macd_hist_curr > 0 and macd_hist_curr < macd_hist.iloc[-2]) and
+        cvd_negative and
+        oi_falling
+    )
+
+    short_exit = (
+        (adx_curr > 20) and
+        (rsi_curr < 40 or macd_hist_curr > macd_hist.iloc[-2])
+    )
+
+    return {
+        'long_entry': long_entry,
+        'long_exit': long_exit,
+        'short_entry': short_entry,
+        'short_exit': short_exit,
+        'details': {
+            'rsi': rsi_curr,
+            'macd_hist': macd_hist_curr,
+            'adx': adx_curr,
+            'close': close.iloc[-1],
+            'cvd': cvd,
+            'oi_delta': oi_delta
+        }
+    }
+
+def weekly_analysis(symbol):
+    now = datetime.utcnow()
+    week_ago = now - timedelta(days=7)
+
+    # Берём часовые свечи за неделю (в реале limit=168 для 7 дней по 24 часа)
+    df = get_klines(symbol, interval='1h', limit=168)
+    oi_df = get_open_interest(symbol, interval='1h', limit=168)
+    df = pd.merge(df, oi_df, on='open_time', how='left')
+    df['open_interest'] = df['open_interest'].fillna(method='ffill')
+
+    # Трейды за неделю
+    trades_df = get_trades(symbol, week_ago, now)
+    cvd = calculate_cvd(trades_df)
+    oi_delta = calculate_oi_delta(df)
+
+    rsi = ta.momentum.RSIIndicator(df['close'], window=14).rsi().iloc[-1]
+    macd_hist = ta.trend.MACD(df['close']).macd_diff().iloc[-1]
+
+    # Анализ тренда: простой пример
+    trend = "⏫ Uptrend" if macd_hist > 0 else "⏬ Downtrend"
+
+    return {
+        'symbol': symbol,
+        'rsi': round(rsi, 1),
+        'macd_hist': round(macd_hist, 3),
+        'cvd': round(cvd, 3),
+        'oi_delta': round(oi_delta, 3),
+        'trend': trend
+    }
 
 if __name__ == "__main__":
-    print(analyze_week())
+    symbols = ["BTCUSDT", "ETHUSDT", "NEARUSDT", "AAVEUSDT"]
+
+    print("📊 Weekly Overview:")
+    for sym in symbols:
+        data = weekly_analysis(sym)
+        print(f"{data['symbol']}: RSI {data['rsi']}, MACD {data['macd_hist']} {data['trend']}, ΔOI {data['oi_delta']}, CVD {data['cvd']}")
