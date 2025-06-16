@@ -2,13 +2,18 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
-from signals import analyze_signal  # Функция анализа из signals.py
+from signals import analyze_signal  # ваша функция анализа
 
 session = HTTP(testnet=False)
 
 def load_tickers():
     with open('tickers.json', 'r', encoding='utf-8') as f:
         return json.load(f)
+
+def round_time(dt, delta):
+    seconds = (dt - datetime(1970, 1, 1)).total_seconds()
+    rounded = seconds - (seconds % delta.total_seconds())
+    return datetime(1970, 1, 1) + timedelta(seconds=rounded)
 
 def get_klines(symbol, interval='15', limit=200):
     res = session.get_kline(
@@ -45,21 +50,24 @@ def get_open_interest(symbol, interval='15', timestamp=None):
     if timestamp is None:
         raise ValueError("Для get_open_interest обязательно указать timestamp")
 
+    # Переводим timestamp из мс в секунды
+    ts_seconds = int(timestamp / 1000)
+
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
         interval=interval_map[interval],
-        intervalTime=timestamp
+        intervalTime=ts_seconds
     )
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
 
     oi_list = res['result']['list']
     if not oi_list:
-        raise Exception(f"❌ Пустой список open_interest для {symbol} (ts={timestamp})")
+        raise Exception(f"❌ Пустой список open_interest для {symbol} (ts={ts_seconds})")
 
     df = pd.DataFrame(oi_list)
-    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='s')  # timestamp в секундах
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
@@ -78,16 +86,17 @@ def get_open_interest_historical(symbol, interval='15', periods=200):
     now = datetime.utcnow()
 
     # Округляем текущее время вниз до последнего закрытого интервала
-    closed_interval_time = now - (now - datetime.min) % delta
+    closed_interval_time = round_time(now, delta)
 
     records = []
     for i in range(periods):
-        ts = int((closed_interval_time - i * delta).timestamp() * 1000)
+        interval_time = closed_interval_time - i * delta
+        ts_ms = int(interval_time.timestamp() * 1000)
         try:
-            df = get_open_interest(symbol, interval=interval, timestamp=ts)
+            df = get_open_interest(symbol, interval=interval, timestamp=ts_ms)
             records.append(df.iloc[0])
         except Exception as e:
-            print(f"Ошибка OI для {symbol} ts={ts}: {e}")
+            print(f"Ошибка OI для {symbol} ts={ts_ms}: {e}")
 
     if not records:
         raise Exception(f"Нет данных open_interest для {symbol}")
