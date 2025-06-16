@@ -2,9 +2,8 @@ import json
 import pandas as pd
 from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
-from signals import analyze_signal  # твоя функция из signals.py
+from signals import analyze_signal  # Функция анализа из signals.py
 
-# Создание сессии
 session = HTTP(testnet=False)
 
 def load_tickers():
@@ -29,20 +28,14 @@ def get_klines(symbol, interval='15', limit=200):
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
 
-    # Получим Open Interest и добавим в df
-    oi_df = get_open_interest(symbol, interval=interval)
+    oi_df = get_open_interest(symbol, interval)
     df = pd.merge(df, oi_df, on='open_time', how='left')
-
     return df
 
 def get_open_interest(symbol, interval='15'):
-    # Bybit требует интервал в формате '15m', '1h', '4h', '1d'
     interval_map = {
-        '15': '15m',
-        '30': '30m',
-        '60': '1h',
-        '240': '4h',
-        'D': '1d'
+        '15': '15m', '30': '30m', '60': '1h',
+        '240': '4h', 'D': '1d'
     }
     if interval not in interval_map:
         raise ValueError(f"Неизвестный интервал: {interval}")
@@ -73,13 +66,13 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка API trades: {res.get('retMsg', 'Неизвестная ошибка')}")
 
-    trade_list = res['result']['list']
-    df = pd.DataFrame(trade_list)
+    trades = res['result']['list']
+    df = pd.DataFrame(trades)
     df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['price'] = df['price'].astype(float)
     df['qty'] = df['qty'].astype(float)
-    df['isBuyerMaker'] = df['side'] == 'Sell'
+    df['isBuyerMaker'] = df['side'] == 'Sell'  # продавец = маркет-мейкер
     return df
 
 def calculate_cvd(trades_df):
@@ -95,13 +88,14 @@ def calculate_oi_delta(df, window=3):
 def analyze_week(symbol):
     now = datetime.utcnow()
     start = now - timedelta(days=7)
+
     all_klines = get_klines(symbol, interval='15', limit=2000)
     all_klines = all_klines[(all_klines['open_time'] >= start) & (all_klines['open_time'] < now)].reset_index(drop=True)
 
     long_entries = 0
     short_entries = 0
 
-    for idx in range(len(all_klines)):
+    for idx in range(50, len(all_klines)):  # Пропустим первые 50, чтобы индикаторы стабилизировались
         df_slice = all_klines.iloc[max(0, idx - 200):idx + 1]
         if df_slice.empty:
             continue
@@ -115,14 +109,15 @@ def analyze_week(symbol):
         oi_delta = calculate_oi_delta(df_slice)
 
         signals = analyze_signal(df_slice, cvd=cvd, oi_delta=oi_delta)
-        if signals.get('long_entry', False):
+
+        if signals.get('long_entry'):
             long_entries += 1
-        if signals.get('short_entry', False):
+        if signals.get('short_entry'):
             short_entries += 1
 
-    print(f"{symbol} за последнюю неделю:")
-    print(f"  Входы в Лонг: {long_entries}")
-    print(f"  Входы в Шорт: {short_entries}")
+    print(f"\n📊 {symbol} за последнюю неделю:")
+    print(f"  ✅ Входов в Лонг: {long_entries}")
+    print(f"  🔻 Входов в Шорт: {short_entries}")
 
 if __name__ == "__main__":
     tickers = load_tickers()
