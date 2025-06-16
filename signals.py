@@ -7,10 +7,6 @@ from datetime import datetime, timedelta
 session = HTTP(testnet=False)
 
 def get_klines(symbol, interval='15m', limit=200):
-    """
-    Получить свечи с Bybit.
-    interval: '15m', '1h', '4h', '1d' и т.п.
-    """
     res = session.get_kline(
         category="linear",
         symbol=symbol,
@@ -27,16 +23,24 @@ def get_klines(symbol, interval='15m', limit=200):
     df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
-
-    # Заглушка для open_interest
-    df['open_interest'] = 0.0
     return df
 
+def get_open_interest(symbol, interval='15m'):
+    res = session.get_open_interest(
+        category="linear",
+        symbol=symbol,
+        interval=interval
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API OI: {res['retMsg']}")
+
+    oi_data = res['result']['list']
+    df = pd.DataFrame(oi_data)
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
+    df['open_interest'] = df['openInterest'].astype(float)
+    return df[['open_time', 'open_interest']]
+
 def get_trades(symbol, start_time, end_time, limit=1000):
-    """
-    Получить публичные трейды за промежуток.
-    API не поддерживает фильтр по времени, фильтрация на клиенте.
-    """
     res = session.get_public_trading_records(
         category="linear",
         symbol=symbol,
@@ -55,25 +59,16 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     return df
 
 def calculate_cvd(trades_df):
-    """
-    CVD — разница объёмов покупок и продаж.
-    """
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    """
-    Дельта open_interest за окно.
-    """
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
 
 def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
-    """
-    Анализ сигналов на основе RSI, MACD, ADX, CVD и OI delta.
-    """
     close = df['close']
     high = df['high']
     low = df['low']
@@ -134,13 +129,18 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
 
 if __name__ == "__main__":
     symbol = "ETHUSDT"
-    df = get_klines(symbol, interval="15m", limit=200)
 
+    df = get_klines(symbol, interval="15m", limit=200)
+    oi_df = get_open_interest(symbol, interval="15m")
+
+    df = pd.merge(df, oi_df, on='open_time', how='left')
+    df['open_interest'] = df['open_interest'].fillna(method='ffill')
+
+    # Последний закрытый интервал
     end_time = df['open_time'].iloc[-1] + timedelta(minutes=15)
     start_time = end_time - timedelta(minutes=5)
 
     trades_df = get_trades(symbol, start_time, end_time)
-
     cvd = calculate_cvd(trades_df)
     oi_delta = calculate_oi_delta(df)
 
