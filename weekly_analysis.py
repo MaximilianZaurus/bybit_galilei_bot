@@ -12,20 +12,27 @@ def load_tickers():
 
 def get_klines(symbol, interval='15', limit=200):
     res = session.get_kline(symbol=symbol, interval=interval, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API: {res['ret_msg']}")
+    if 'retCode' in res and res['retCode'] != 0:
+        raise Exception(f"Ошибка API: {res.get('retMsg', 'Неизвестная ошибка')}")
+    if 'result' not in res:
+        raise Exception("Нет данных в ответе API")
+
     df = pd.DataFrame(res['result'])
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
+    df['open_time'] = pd.to_datetime(df['openTime'], unit='ms')
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'openInterest']:
         df[col] = df[col].astype(float)
+    df.rename(columns={'openInterest': 'open_interest', 'openTime': 'open_time'}, inplace=True)
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
     res = session.get_recent_trades(symbol=symbol, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API trades: {res['ret_msg']}")
+    if 'retCode' in res and res['retCode'] != 0:
+        raise Exception(f"Ошибка API trades: {res.get('retMsg', 'Неизвестная ошибка')}")
+    if 'result' not in res:
+        raise Exception("Нет данных в ответе API trades")
+
     trades_df = pd.DataFrame(res['result'])
-    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'], unit='ms')
+    trades_df['trade_time'] = pd.to_datetime(trades_df['tradeTime'], unit='ms')
     trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] < end_time)]
     for col in ['price', 'qty']:
         trades_df[col] = trades_df[col].astype(float)
@@ -65,9 +72,9 @@ def analyze_week(symbol):
         oi_delta = calculate_oi_delta(df_slice)
 
         signals = analyze_signal(df_slice, cvd=cvd, oi_delta=oi_delta)
-        if signals['long_entry']:
+        if signals.get('long_entry', False):
             long_entries += 1
-        if signals['short_entry']:
+        if signals.get('short_entry', False):
             short_entries += 1
 
     print(f"{symbol} за последнюю неделю:")
