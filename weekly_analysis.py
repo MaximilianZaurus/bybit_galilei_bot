@@ -154,10 +154,10 @@ async def analyze_and_send():
             d = signals['details']
 
             msg = (
-                f"📊 <b>{ticker}</b>\n"
+                f"\U0001F4CA <b>{ticker}</b>\n"
                 f"Цена: {d['close']:.4f} | RSI: {d['rsi']:.1f} | MACD: {d['macd_hist']:.3f} | ADX: {d['adx']:.1f}\n"
-                f"CVD: {cvd_value:.1f} | ΔOI: {oi_delta:.1f}\n"
-                f"🟢 Лонг: {'✅' if signals['long_entry'] else '—'}\n"
+                f"CVD: {cvd_value:.1f} | ∆OI: {oi_delta:.1f}\n"
+                f"\U0001F7E2 Лонг: {'✅' if signals['long_entry'] else '—'}\n"
                 f"🔴 Шорт: {'✅' if signals['short_entry'] else '—'}"
             )
             messages.append(msg)
@@ -189,7 +189,7 @@ def start_scheduler():
 async def on_startup():
     try:
         start_scheduler()
-        await send_message("🚀 Бот запущен. Первый анализ будет в ближайший 15-минутный интервал.")
+        await send_message("\U0001F680 Бот запущен. Первый анализ будет в ближайший 15-минутный интервал.")
         logger.info("Startup завершен, бот работает")
     except Exception as e:
         logger.error(f"Ошибка при старте: {e}")
