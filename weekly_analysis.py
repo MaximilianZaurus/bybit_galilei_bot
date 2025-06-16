@@ -43,31 +43,27 @@ def get_open_interest(symbol, interval="15", limit=672):
     if not interval_str:
         raise ValueError(f"Unsupported interval for Open Interest: {interval}")
 
-    res = session.get_open_interest(
-        category="linear",
-        symbol=symbol,
-        intervalTime=interval_str,
-        limit=limit
-    )
-    if res.get("retCode", 1) != 0:
-        raise Exception(f"OI error for {symbol}: {res.get('retMsg')}")
-    raw = res["result"]["list"]
-    logger.info(f"Open Interest data points for {symbol} at {interval_str}: {len(raw)}")
-    if len(raw) < 2:
+    try:
+        res = session.get_open_interest(
+            category="linear",
+            symbol=symbol,
+            intervalTime=interval_str,
+            limit=limit
+        )
+        if res.get("retCode", 1) != 0:
+            logger.error(f"[OI ERROR] Symbol: {symbol}, Interval: {interval_str}, Error: {res.get('retMsg')}")
+            return None
+        raw = res["result"]["list"]
+        if len(raw) < 2:
+            logger.warning(f"[OI WARNING] Not enough data for {symbol} ({interval_str}): {len(raw)} points")
+            return None
+        df = pd.DataFrame(raw)
+        df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
+        df["openInterest"] = df["openInterest"].astype(float)
+        return df
+    except Exception as e:
+        logger.exception(f"[OI EXCEPTION] Symbol: {symbol}, Interval: {interval_str}, Exception: {e}")
         return None
-    df = pd.DataFrame(raw)
-    df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
-    df["openInterest"] = df["openInterest"].astype(float)
-    return df
-
-def get_trades(symbol, limit=1000):
-    res = session.get_public_trading_history(category="linear", symbol=symbol, limit=limit)
-    if res.get("retCode", 1) != 0:
-        raise Exception(f"Trades error for {symbol}: {res.get('retMsg')}")
-    df = pd.DataFrame(res["result"]["list"])
-    df["size"] = df["qty"].astype(float)
-    df["cvd"] = df.apply(lambda r: r["size"] if r["side"] == "Buy" else -r["size"], axis=1).cumsum()
-    return df
 
 def analyze_week():
     tickers = load_tickers()
@@ -87,21 +83,16 @@ def analyze_week():
 
             oi = get_open_interest(sym)
             if oi is None:
-                logger.warning(f"Open Interest data missing or insufficient for {sym}")
                 oi_d = "N/A"
             else:
                 oi_d = oi["openInterest"].iloc[-1] - oi["openInterest"].iloc[-2]
 
-            tr = get_trades(sym)
-            if len(tr) < 2:
-                raise Exception("мало трейдов")
-            cvd_d = tr["cvd"].iloc[-1] - tr["cvd"].iloc[-2]
-
+            # Временно отключаем CVD
             msgs.append(
-                f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}, ΔCVD {cvd_d:.1f}"
+                f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}"
             )
         except Exception as e:
-            logger.error(f"{sym}: {e}")
+            logger.error(f"[ANALYZE ERROR] {sym}: {e}")
             msgs.append(f"{sym}: ❌ {e}")
     return "Weekly Overview:\n" + "\n".join(msgs)
 
