@@ -2,6 +2,9 @@ import os
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
 
+import logging
+import sys
+import traceback
 from datetime import datetime
 
 from bot import telegram_app              # Объект Application от python-telegram-bot
