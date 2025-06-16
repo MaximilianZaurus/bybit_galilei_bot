@@ -11,7 +11,7 @@ from fastapi import FastAPI
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
-from bot import send_message  # твоя асинхронная функция отправки сообщений в Telegram
+from bot import send_message  # асинхронная функция отправки сообщений в Telegram
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -50,6 +50,15 @@ def get_klines(symbol, interval='15', limit=200):
 
     return df.reset_index(drop=True)
 
+def get_latest_open_interest(symbol):
+    res = session.get_open_interest(
+        category="linear",
+        symbol=symbol
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API open_interest: {res['retMsg']}")
+    return float(res['result']['openInterest'])
+
 def get_trades(symbol, start_time, end_time, limit=1000):
     res = session.get_public_trading_records(
         category="linear",
@@ -71,10 +80,11 @@ def calculate_cvd(trades_df):
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
-def calculate_oi_delta(df, window=3):
+def calculate_oi_delta(df, latest_oi, window=3):
     if len(df) < window + 1:
         return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1] if 'open_interest' in df else 0
+    prev_oi = df['open_interest'].iloc[-window - 1] if 'open_interest' in df.columns else 0
+    return latest_oi - prev_oi
 
 def analyze_signal(df, cvd=0, oi_delta=0):
     close = df['close']
@@ -82,9 +92,8 @@ def analyze_signal(df, cvd=0, oi_delta=0):
     low = df['low']
 
     rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
-    macd = ta.trend.MACD(close)
-    macd_hist = macd.macd_diff().iloc[-1]
-    macd_hist_prev = macd.macd_diff().iloc[-2]
+    macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
+    macd_hist_prev = ta.trend.MACD(close).macd_diff().iloc[-2]
     adx = ta.trend.ADXIndicator(high, low, close, window=14).adx().iloc[-1]
 
     long_entry = (
@@ -137,7 +146,9 @@ async def analyze_and_send():
             end_trades = candle_time + timedelta(minutes=15)
             trades = get_trades(ticker, start_trades, end_trades)
             cvd_value = calculate_cvd(trades)
-            oi_delta = calculate_oi_delta(df)
+
+            latest_oi = get_latest_open_interest(ticker)
+            oi_delta = calculate_oi_delta(df, latest_oi)
 
             signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta)
             d = signals['details']
@@ -156,30 +167,6 @@ async def analyze_and_send():
 
     final_message = "\n\n".join(messages)
     await send_message(final_message)
-
-def analyze_week(symbol):
-    now = datetime.utcnow()
-    start = now - timedelta(days=7)
-    df = get_klines(symbol, interval=TIMEFRAME, limit=2000)
-    df = df[(df['open_time'] >= start) & (df['open_time'] < now)].reset_index(drop=True)
-
-    long_entries = 0
-    short_entries = 0
-
-    for idx in range(200, len(df)):
-        df_slice = df.iloc[idx - 200:idx + 1]
-        candle_time = df_slice['open_time'].iloc[-1]
-        trades = get_trades(symbol, candle_time, candle_time + timedelta(minutes=15))
-        cvd = calculate_cvd(trades)
-        oi_delta = calculate_oi_delta(df_slice)
-
-        signals = analyze_signal(df_slice, cvd, oi_delta)
-        if signals['long_entry']:
-            long_entries += 1
-        if signals['short_entry']:
-            short_entries += 1
-
-    print(f"{symbol} — за неделю: 🟢 Лонг: {long_entries}, 🔴 Шорт: {short_entries}")
 
 scheduler = None
 
