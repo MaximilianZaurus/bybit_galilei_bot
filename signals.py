@@ -3,8 +3,8 @@ import pandas as pd
 import ta
 from datetime import datetime, timedelta
 
-# Инициализация сессии Bybit v5 (реальный режим)
-session = HTTP(testnet=False)
+# Инициализация сессии Bybit v5 (реальный рынок)
+session = HTTP(testnet=False)  # testnet=True если нужна тестовая сеть
 
 def get_klines(symbol, interval='15m', limit=200):
     res = session.get_kline(
@@ -55,6 +55,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['price'] = df['price'].astype(float)
     df['qty'] = df['qty'].astype(float)
+    # Bybit v5: "side" == "Sell" значит продавец инициатор — значит покупатель maker? Тут isBuyerMaker True, если инициатор продажи
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
@@ -136,9 +137,9 @@ if __name__ == "__main__":
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
-    # Последний закрытый интервал
+    # Последний закрытый интервал для трейдов — 15 минут после последней свечи
     end_time = df['open_time'].iloc[-1] + timedelta(minutes=15)
-    start_time = end_time - timedelta(minutes=5)
+    start_time = end_time - timedelta(minutes=15)
 
     trades_df = get_trades(symbol, start_time, end_time)
     cvd = calculate_cvd(trades_df)
