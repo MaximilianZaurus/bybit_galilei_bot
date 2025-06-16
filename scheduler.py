@@ -62,7 +62,10 @@ async def get_open_interest_history(ticker: str) -> list[dict]:
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url)
+            resp.raise_for_status()
             data = resp.json()
+            if data.get('retCode', 1) != 0:
+                raise Exception(f"API error: {data.get('retMsg')}")
             return data['result']['list']
     except Exception as e:
         logger.warning(f"Ошибка при получении истории OI для {ticker}: {e}")
@@ -83,7 +86,7 @@ def calculate_oi_delta(oi_list: list[dict]) -> float:
 
 
 def mock_cvd(df: pd.DataFrame) -> float:
-    """Временный расчёт CVD — сумма дифференциала цены"""
+    """Временный расчёт CVD — сумма дифференциала цены, замените на данные из WS"""
     return df['close'].diff().fillna(0).cumsum().iloc[-1]
 
 
@@ -95,15 +98,13 @@ async def analyze_and_send():
         try:
             df = await fetch_klines(ticker)
 
-            # Имитированный CVD
+            # Здесь заменить mock_cvd на получение CVD из вашего WebSocket клиента
             cvd_value = mock_cvd(df)
 
-            # История Open Interest и Delta
             oi_history = await get_open_interest_history(ticker)
             oi_delta = calculate_oi_delta(oi_history)
             oi_value = float(oi_history[-1]['openInterest']) if oi_history else 0.0
 
-            # Анализ сигналов с cvd и oi_delta
             signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta)
             d = signals['details']
 
