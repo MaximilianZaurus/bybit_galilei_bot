@@ -24,17 +24,17 @@ def get_klines(symbol, interval='1h', limit=168):
         raise Exception(f"Kline API error: {res['retMsg']}")
 
     kline_list = res['result']['list']
-    df = pd.DataFrame(kline_list)
+
+    # Важно: get_kline возвращает список списков — задаем имена колонок вручную
+    df = pd.DataFrame(kline_list, columns=[
+        'start', 'open', 'high', 'low', 'close', 'volume', 'turnover'
+    ])
     df['open_time'] = pd.to_datetime(df['start'].astype(int), unit='s')
 
-    # Приведение к числам
-    numeric_cols = ['open', 'high', 'low', 'close', 'volume']
+    # Приведение к float
+    numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
     for col in numeric_cols:
         df[col] = df[col].astype(float)
-    if 'turnover' in df.columns:
-        df['turnover'] = df['turnover'].astype(float)
-    else:
-        df['turnover'] = 0.0
 
     return df[['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']]
 
@@ -49,7 +49,7 @@ def get_open_interest(symbol, interval='1h'):
         raise Exception(f"OI API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='s')  # SECONDS
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(int), unit='s')  # SECONDS
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
@@ -64,7 +64,7 @@ def get_trades(symbol, start_time, end_time):
         raise Exception(f"Trade API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')  # MILLISECONDS
+    df['trade_time'] = pd.to_datetime(df['execTime'].astype(int), unit='ms')  # MILLISECONDS
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['qty'] = df['execQty'].astype(float)
     df['isBuyerMaker'] = df['side'] == 'Sell'
