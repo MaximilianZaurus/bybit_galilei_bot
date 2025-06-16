@@ -1,153 +1,142 @@
-# scheduler.py
 import asyncio
+import json
+import logging
 import pandas as pd
-from datetime import datetime, timedelta
-from pybit.unified_trading import HTTP
-from signals import analyze_signal
-from json import load as json_load
+import httpx
+import sys
+import traceback
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
+from fastapi import FastAPI
 
-# Инициализация сессии v5 API
-session = HTTP(testnet=False)
+from bot import send_message       # асинхронная функция отправки сообщения в Telegram
+from signals import analyze_signal # функция анализа сигналов
 
-# Загрузка тикеров из файла
-def load_tickers(filename="tickers.json"):
-    with open(filename, "r", encoding="utf-8") as f:
-        return json_load(f)
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# Загрузка свечей
-def get_klines(symbol, interval='15', total_limit=2000):
-    max_limit = 1000
-    interval_map = {
-        '1': 60, '3': 180, '5': 300, '15': 900,
-        '30': 1800, '60': 3600, '120': 7200,
-        '240': 14400, 'D': 86400
+TIMEFRAME = '15'
+BASE_URL = "https://api.bybit.com/v5/market/kline"
+
+app = FastAPI()
+
+def load_tickers():
+    with open('tickers.json', 'r', encoding='utf-8') as f:
+        return json.load(f)
+
+async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
+    params = {
+        'category': 'linear',
+        'symbol': ticker,
+        'interval': TIMEFRAME,
+        'limit': limit
     }
-    if interval not in interval_map:
-        raise ValueError(f"Unsupported interval: {interval}")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(BASE_URL, params=params)
+        resp.raise_for_status()
+        data = resp.json()
 
-    result = []
-    end_time = int(datetime.utcnow().timestamp())
-    count = 0
+    if data.get('retCode', 1) != 0:
+        raise Exception(f"API Error for {ticker}: {data.get('retMsg')}")
 
-    while count < total_limit:
-        limit = min(max_limit, total_limit - count)
-        res = session.get_kline(
-            category="linear",
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            end=end_time * 1000
-        )
-        if res.get('retCode', 1) != 0:
-            raise Exception(f"API get_kline error: {res.get('retMsg')}")
+    klines = data.get('result', {}).get('list', [])
+    if not klines:
+        raise Exception(f"No kline data returned for {ticker}")
 
-        klines = res['result']['list']
-        if not klines:
-            break
+    df = pd.DataFrame(klines)
+    df.columns = ['open_time', 'open', 'high', 'low', 'close', 'volume'] + [f"extra_{i}" for i in range(len(df.columns) - 6)]
+    df = df[['open_time', 'open', 'high', 'low', 'close', 'volume']]
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        df[col] = pd.to_numeric(df[col])
+    return df
 
-        result = klines + result
-        count += len(klines)
-        oldest_time = int(klines[-1][0]) // 1000
-        end_time = oldest_time - interval_map[interval]
+async def get_open_interest_history(ticker: str) -> list[dict]:
+    url = f"https://api.bybit.com/v5/market/open-interest?category=linear&symbol={ticker}&interval=15"
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(url)
+            resp.raise_for_status()
+            data = resp.json()
+            if data.get('retCode', 1) != 0:
+                raise Exception(f"API error: {data.get('retMsg')}")
+            return data['result']['list']
+    except Exception as e:
+        logger.warning(f"Ошибка при получении истории OI для {ticker}: {e}")
+        return []
 
-    # Проверка, что пришёл open_interest
-    if len(result[0]) < 8:
-        raise Exception(f"⛔ Для {symbol} не пришёл open_interest. Проверь категорию и символ.")
+def calculate_oi_delta(oi_list: list[dict]) -> float:
+    if len(oi_list) < 4:
+        return 0.0
+    try:
+        current = float(oi_list[-1]['openInterest'])
+        past = float(oi_list[-4]['openInterest'])
+        return current - past
+    except Exception as e:
+        logger.warning(f"Ошибка при расчёте oi_delta: {e}")
+        return 0.0
 
-    df = pd.DataFrame(result, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest'
-    ])
-    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
-        df[col] = df[col].astype(float)
-    return df.sort_values('open_time').reset_index(drop=True)
+def mock_cvd(df: pd.DataFrame) -> float:
+    return df['close'].diff().fillna(0).cumsum().iloc[-1]
 
-# Получение трейдов
-def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.query_recent_trading_records(symbol=symbol, limit=limit)
-    if res.get('retCode', 1) != 0:
-        raise Exception(f"API trades error: {res.get('retMsg')}")
-    trades_df = pd.DataFrame(res['result'])
-    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'], unit='ms')
-    trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] < end_time)]
-    for col in ['price', 'qty']:
-        trades_df[col] = trades_df[col].astype(float)
-    trades_df['isBuyerMaker'] = trades_df['isBuyerMaker'].astype(bool)
-    return trades_df
-
-# Подсчёт CVD
-def calculate_cvd(trades_df):
-    buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
-    sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
-    return buy_volume - sell_volume
-
-# ΔOI
-def calculate_oi_delta(df, window=3):
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
-
-# ADX
-def calculate_adx(df, period=14):
-    high = df['high']
-    low = df['low']
-    close = df['close']
-
-    plus_dm = high.diff()
-    minus_dm = low.diff().abs()
-
-    plus_dm = plus_dm.where((plus_dm > minus_dm) & (plus_dm > 0), 0.0)
-    minus_dm = minus_dm.where((minus_dm > plus_dm) & (minus_dm > 0), 0.0)
-
-    tr1 = high - low
-    tr2 = (high - close.shift()).abs()
-    tr3 = (low - close.shift()).abs()
-    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-
-    atr = tr.rolling(period).mean()
-
-    plus_di = 100 * (plus_dm.rolling(period).sum() / atr)
-    minus_di = 100 * (minus_dm.rolling(period).sum() / atr)
-
-    dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di)
-    adx = dx.rolling(period).mean()
-    return adx.iloc[-1] if not adx.empty else 0.0
-
-# Главная функция анализа
-async def analyze_and_send(send_message):
+async def analyze_and_send():
     tickers = load_tickers()
-    now = datetime.utcnow()
-    start = now - timedelta(days=7)
+    messages = []
 
     for ticker in tickers:
         try:
-            df = get_klines(ticker, interval='15', total_limit=2000)
-            df = df[(df['open_time'] >= start) & (df['open_time'] < now)].reset_index(drop=True)
-            if df.empty:
-                raise Exception("Нет данных для анализа.")
+            df = await fetch_klines(ticker)
+            cvd_value = mock_cvd(df)
+            oi_history = await get_open_interest_history(ticker)
+            oi_delta = calculate_oi_delta(oi_history)
+            oi_value = float(oi_history[-1]['openInterest']) if oi_history else 0.0
 
-            candle_time = df['open_time'].iloc[-1]
-            trades = get_trades(ticker, candle_time, candle_time + timedelta(minutes=15))
-            cvd = calculate_cvd(trades)
-            oi_delta = calculate_oi_delta(df)
-            adx = calculate_adx(df)
-
-            signals = analyze_signal(df, cvd=cvd, oi_delta=oi_delta, adx=adx)
+            signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta)
+            d = signals['details']
 
             msg = (
                 f"📊 <b>{ticker}</b>\n"
-                f"Цена: {df['close'].iloc[-1]:.4f} | RSI: {signals.get('rsi', 0):.1f} | "
-                f"MACD: {signals.get('macd_hist', 0):.3f} | ADX: {adx:.1f}\n"
-                f"CVD: {cvd:.1f} | ΔOI: {oi_delta:.1f}\n"
-                f"🟢 Лонг: {'✅' if signals.get('long_entry') else '—'}\n"
-                f"🔴 Шорт: {'✅' if signals.get('short_entry') else '—'}"
+                f"Цена: {d['close']:.4f} | RSI: {d['rsi']:.1f} | MACD: {d['macd_hist']:.3f} | ADX: {d['adx']:.1f}\n"
+                f"CVD: {cvd_value:.1f} | ΔOI: {oi_delta:.1f}\n"
+                f"🟢 Лонг: {'✅' if signals['long_entry'] else '—'}\n"
+                f"🔴 Шорт: {'✅' if signals['short_entry'] else '—'}"
             )
-
-            await send_message(msg)
-
+            messages.append(msg)
         except Exception as e:
-            await send_message(f"❌ Ошибка анализа {ticker}: {e}")
+            logger.error(f"Ошибка при обработке {ticker}: {e}")
+            messages.append(f"❗ Ошибка с {ticker}: {e}")
 
-# Для отладки
-if __name__ == "__main__":
-    async def dummy_send(msg):
-        print(msg)
-    asyncio.run(analyze_and_send(dummy_send))
+    final_message = "\n\n".join(messages)
+    await send_message(final_message)
+
+scheduler = None
+
+def start_scheduler():
+    global scheduler
+    loop = asyncio.get_event_loop()
+    scheduler = AsyncIOScheduler(event_loop=loop)
+
+    async def async_job_wrapper():
+        await analyze_and_send()
+
+    def run_async_job():
+        asyncio.run_coroutine_threadsafe(async_job_wrapper(), loop)
+
+    # Каждые 15 минут по часам: 00, 15, 30, 45
+    scheduler.add_job(run_async_job, trigger=CronTrigger(minute='0,15,30,45'))
+    scheduler.start()
+    logger.info("Scheduler started with CronTrigger: every 15 mins on the dot")
+
+@app.on_event("startup")
+async def on_startup():
+    try:
+        start_scheduler()
+        await send_message("🚀 Бот запущен. Первый анализ будет в ближайший 15-минутный интервал.")
+        logger.info("Startup complete, bot running.")
+    except Exception as e:
+        logger.error(f"Error on startup: {e}")
+        traceback.print_exc(file=sys.stdout)
+
+@app.get("/")
+async def root():
+    return {"message": "Bot is running"}
