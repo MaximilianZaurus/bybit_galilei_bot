@@ -1,42 +1,42 @@
 import json
-from pathlib import Path
 from datetime import datetime, timedelta
 import pandas as pd
+import ta
 from pybit.unified_trading import HTTP
-from signals import analyze_signal  # твоя функция анализа из signals.py
 
-session = HTTP(endpoint="https://api.bybit.com")
+# Инициализация сессии Bybit v5 (реальный рынок)
+session = HTTP(testnet=False)  # testnet=True для тестовой сети
 
-def load_tickers(filepath='tickers.json'):
-    path = Path(filepath)
-    if not path.exists():
-        raise FileNotFoundError(f"Файл {filepath} не найден")
-    with open(path, 'r', encoding='utf-8') as f:
-        data = json.load(f)
-    return data
+def load_tickers(path="tickers.json"):
+    with open(path, "r", encoding="utf-8") as f:
+        return json.load(f)
 
-def get_klines(symbol, interval='15', limit=200, start_time=None, end_time=None):
-    """
-    Получает свечи с Bybit v5.
-    interval — строка, например '15' (минуты).
-    """
-    res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API get_klines: {res['ret_msg']}")
-    df = pd.DataFrame(res['result'])
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+def get_klines(symbol, interval='15', limit=200):
+    res = session.get_kline(
+        category="linear",
+        symbol=symbol,
+        interval=interval,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API get_klines: {res['retMsg']}")
+    df = pd.DataFrame(res['result']['list'])
+    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
-        df[col] = df[col].astype(float)
-    if start_time and end_time:
-        df = df[(df['open_time'] >= start_time) & (df['open_time'] < end_time)]
+        if col in df.columns:
+            df[col] = df[col].astype(float)
     return df.reset_index(drop=True)
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.query_recent_trading_records(symbol=symbol, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API trades: {res['ret_msg']}")
-    trades_df = pd.DataFrame(res['result'])
-    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'], unit='ms')
+    res = session.get_public_trading_records(
+        category="linear",
+        symbol=symbol,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Ошибка API trades: {res['retMsg']}")
+    trades_df = pd.DataFrame(res['result']['list'])
+    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'].astype(float), unit='ms')
     trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] < end_time)]
     for col in ['price', 'qty']:
         trades_df[col] = trades_df[col].astype(float)
@@ -44,14 +44,61 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     return trades_df.reset_index(drop=True)
 
 def calculate_cvd(trades_df):
-    buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
-    sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
+    buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
+    sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    if len(df) < window + 1:
+    if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
+
+def analyze_signal(df, cvd=0, oi_delta=0):
+    close = df['close']
+    high = df['high']
+    low = df['low']
+
+    rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
+    macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
+    adx = ta.trend.ADXIndicator(high, low, close, window=14).adx().iloc[-1]
+
+    long_entry = (
+        (adx > 20) and
+        (rsi < 35) and
+        (macd_hist < 0 and macd_hist > ta.trend.MACD(close).macd_diff().iloc[-2]) and
+        (cvd > 0) and
+        (oi_delta > 0)
+    )
+    long_exit = (
+        (adx > 20) and
+        (rsi > 60 or macd_hist < ta.trend.MACD(close).macd_diff().iloc[-2])
+    )
+    short_entry = (
+        (adx > 20) and
+        (rsi > 65) and
+        (macd_hist > 0 and macd_hist < ta.trend.MACD(close).macd_diff().iloc[-2]) and
+        (cvd < 0) and
+        (oi_delta < 0)
+    )
+    short_exit = (
+        (adx > 20) and
+        (rsi < 40 or macd_hist > ta.trend.MACD(close).macd_diff().iloc[-2])
+    )
+
+    return {
+        'long_entry': long_entry,
+        'long_exit': long_exit,
+        'short_entry': short_entry,
+        'short_exit': short_exit,
+        'details': {
+            'rsi': rsi,
+            'macd_hist': macd_hist,
+            'adx': adx,
+            'close': close.iloc[-1],
+            'cvd': cvd,
+            'oi_delta': oi_delta
+        }
+    }
 
 def analyze_week(symbol):
     now = datetime.utcnow()
@@ -76,9 +123,10 @@ def analyze_week(symbol):
         oi_delta = calculate_oi_delta(df_slice)
 
         signals = analyze_signal(df_slice, cvd=cvd, oi_delta=oi_delta)
-        if signals.get('long_entry'):
+
+        if signals['long_entry']:
             long_entries += 1
-        if signals.get('short_entry'):
+        if signals['short_entry']:
             short_entries += 1
 
     print(f"{symbol} за последнюю неделю:")
@@ -86,9 +134,6 @@ def analyze_week(symbol):
     print(f"  Входы в Шорт: {short_entries}")
 
 if __name__ == "__main__":
-    tickers = load_tickers()
-    for symbol in tickers:
-        try:
-            analyze_week(symbol)
-        except Exception as e:
-            print(f"Ошибка при анализе {symbol}: {e}")
+    tickers = load_tickers("tickers.json")
+    for ticker in tickers:
+        analyze_week(ticker)
