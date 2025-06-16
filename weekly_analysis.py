@@ -51,7 +51,7 @@ def get_open_interest(symbol, interval='15'):
     return df[['open_time', 'open_interest']]
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_public_trading_records(
+    res = session.get_trade_history(
         category="linear",
         symbol=symbol,
         limit=limit
@@ -76,7 +76,7 @@ def calculate_cvd(trades_df):
 def calculate_oi_delta(df, window=3):
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
 
 def analyze_week(symbol):
     now = datetime.utcnow()
@@ -88,7 +88,7 @@ def analyze_week(symbol):
     short_entries = 0
 
     for idx in range(len(all_klines)):
-        df_slice = all_klines.iloc[max(0, idx-200):idx+1]
+        df_slice = all_klines.iloc[max(0, idx - 200):idx + 1]
         if df_slice.empty:
             continue
 
