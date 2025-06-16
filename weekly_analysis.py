@@ -1,6 +1,6 @@
 import json
 import pandas as pd
-from datetime import datetime, timedelta
+from datetime import datetime
 from pybit.unified_trading import HTTP
 import ta
 import logging
@@ -32,9 +32,9 @@ def get_klines(symbol, interval="15", limit=672):
     res = session.get_kline(category="linear", symbol=symbol, interval=interval, limit=limit)
     if res.get("retCode", 1) != 0:
         raise Exception(f"Kline error for {symbol}: {res.get('retMsg')}")
-    df = pd.DataFrame(res["result"]["list"], columns=["open_time","open","high","low","close","volume","turnover"])
+    df = pd.DataFrame(res["result"]["list"], columns=["open_time", "open", "high", "low", "close", "volume", "turnover"])
     df["open_time"] = pd.to_datetime(df["open_time"].astype(float), unit="ms")
-    for c in ["open","high","low","close","volume","turnover"]:
+    for c in ["open", "high", "low", "close", "volume", "turnover"]:
         df[c] = df[c].astype(float)
     return df
 
@@ -61,7 +61,7 @@ def get_open_interest(symbol, interval="15", limit=672):
     return df
 
 def get_trades(symbol, limit=1000):
-    res = session.get_public_trading_records(category="linear", symbol=symbol, limit=limit)
+    res = session.get_public_trading_history(category="linear", symbol=symbol, limit=limit)
     if res.get("retCode", 1) != 0:
         raise Exception(f"Trades error for {symbol}: {res.get('retMsg')}")
     df = pd.DataFrame(res["result"]["list"])
@@ -97,7 +97,9 @@ def analyze_week():
                 raise Exception("мало трейдов")
             cvd_d = tr["cvd"].iloc[-1] - tr["cvd"].iloc[-2]
 
-            msgs.append(f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}, ΔCVD {cvd_d:.1f}")
+            msgs.append(
+                f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}, ΔCVD {cvd_d:.1f}"
+            )
         except Exception as e:
             logger.error(f"{sym}: {e}")
             msgs.append(f"{sym}: ❌ {e}")
