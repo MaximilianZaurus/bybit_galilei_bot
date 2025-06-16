@@ -5,7 +5,7 @@ from pybit.unified_trading import HTTP
 from signals import analyze_signal  # твоя функция анализа сигналов
 from json import load as json_load
 
-session = HTTP(endpoint="https://api.bybit.com")
+session = HTTP(testnet=False)
 
 # Функция для загрузки тикеров из файла tickers.json
 def load_tickers(filename="tickers.json"):
