@@ -2,7 +2,7 @@ from pybit.unified_trading import HTTP
 import pandas as pd
 import ta
 
-def get_klines(symbol, interval='1', limit=200):
+def get_klines(symbol, interval='15', limit=200):
     res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
     if res['ret_code'] != 0:
         raise Exception(f"Ошибка API: {res['ret_msg']}")
@@ -42,52 +42,44 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
     low = df['low']
 
     rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci = ta.trend.CCIIndicator(high, low, close, window=20).cci()
     macd_hist = ta.trend.MACD(close).macd_diff()
-    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    adx = ta.trend.ADXIndicator(high, low, close, window=14).adx()
 
     rsi_curr = rsi.iloc[-1]
-    cci_curr = cci.iloc[-1]
     macd_hist_curr = macd_hist.iloc[-1]
-    macd_trend_up = macd_hist_curr > 0
-    macd_trend_down = macd_hist_curr < 0
+    adx_curr = adx.iloc[-1]
     close_curr = close.iloc[-1]
-    bb_upper = bb.bollinger_hband().iloc[-1]
-    bb_lower = bb.bollinger_lband().iloc[-1]
 
     cvd_positive = cvd > 0
     cvd_negative = cvd < 0
     oi_rising = oi_delta > 0
     oi_falling = oi_delta < 0
 
-    bb_delta = (bb_upper - bb_lower) * 0.1
-
+    # Логика входа — только если тренд выражен (ADX > 20)
     long_entry = (
-        (rsi_curr < 40 or cci_curr < -80) and
-        macd_trend_up and
-        close_curr <= bb_lower + bb_delta and
+        (adx_curr > 20) and
+        (rsi_curr < 35) and
+        (macd_hist_curr < 0 and macd_hist_curr > macd_hist.iloc[-2]) and
         cvd_positive and
         oi_rising
     )
 
     long_exit = (
-        (rsi_curr > 60 or cci_curr > 80) and
-        macd_trend_down and
-        close_curr >= bb_upper - bb_delta
+        (adx_curr > 20) and
+        (rsi_curr > 60 or macd_hist_curr < macd_hist.iloc[-2])
     )
 
     short_entry = (
-        (rsi_curr > 60 or cci_curr > 80) and
-        macd_trend_down and
-        close_curr >= bb_upper - bb_delta and
+        (adx_curr > 20) and
+        (rsi_curr > 65) and
+        (macd_hist_curr > 0 and macd_hist_curr < macd_hist.iloc[-2]) and
         cvd_negative and
         oi_falling
     )
 
     short_exit = (
-        (rsi_curr < 40 or cci_curr < -80) and
-        macd_trend_up and
-        close_curr <= bb_lower + bb_delta
+        (adx_curr > 20) and
+        (rsi_curr < 40 or macd_hist_curr > macd_hist.iloc[-2])
     )
 
     return {
@@ -97,11 +89,9 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
         'short_exit': short_exit,
         'details': {
             'rsi': rsi_curr,
-            'cci': cci_curr,
             'macd_hist': macd_hist_curr,
+            'adx': adx_curr,
             'close': close_curr,
-            'bb_upper': bb_upper,
-            'bb_lower': bb_lower,
             'cvd': cvd,
             'oi_delta': oi_delta
         }
@@ -112,13 +102,13 @@ def main():
     session = HTTP(endpoint="https://api.bybit.com")
 
     symbol = "ETHUSDT"
-    interval = '1'  # 1 минута
+    interval = '15'  # 15 минутный таймфрейм
 
     print(f"Запуск анализа для {symbol} с интервалом {interval} мин")
 
     df = get_klines(symbol, interval=interval, limit=200)
 
-    end_time = df['open_time'].iloc[-1] + pd.Timedelta(minutes=1)
+    end_time = df['open_time'].iloc[-1] + pd.Timedelta(minutes=15)
     start_time = end_time - pd.Timedelta(minutes=5)
 
     trades_df = get_trades(symbol, start_time, end_time)
