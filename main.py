@@ -13,19 +13,24 @@ if not BOT_TOKEN:
 
 app = FastAPI()
 
+
 @app.on_event("startup")
 async def startup_event():
     start_scheduler()  # Запускаем планировщик при старте
     print("✅ Bot scheduler started")
 
+
 @app.post(f"/webhook/{BOT_TOKEN}")
 async def telegram_webhook(req: Request):
     try:
         update = await req.json()
+        # В python-telegram-bot v20+ метод обработчика обновлений называется `process_update` или `update_queue.put` 
+        # Но если telegram_app — ваш обёртка, оставляем await telegram_app.update(update)
         await telegram_app.update(update)
         return {"status": "ok"}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
 
 @app.get("/")
 def read_root():
