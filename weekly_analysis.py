@@ -1,13 +1,9 @@
-# weekly_analysis.py
-
 import json
 import pandas as pd
 from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
 import ta
 import logging
-
-from bot import send_message  # async
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -63,6 +59,5 @@ def analyze_week():
             logger.error(f"Ошибка в анализе {symbol}: {e}")
             messages.append(f"❌ Ошибка анализа {symbol}: {e}")
 
-    final_msg = "\n\n".join(messages)
-    import asyncio
-    asyncio.create_task(send_message("📈 <b>Недельный анализ</b>\n\n" + final_msg))
+    final_msg = "📈 <b>Недельный анализ</b>\n\n" + "\n\n".join(messages)
+    return final_msg
