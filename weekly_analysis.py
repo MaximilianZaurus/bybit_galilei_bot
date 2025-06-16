@@ -15,8 +15,8 @@ def round_time(dt, delta):
     rounded = seconds - (seconds % delta.total_seconds())
     return datetime(1970, 1, 1) + timedelta(seconds=rounded)
 
-def get_klines(symbol, interval='15', limit=200):
-    res = session.get_kline_v5(
+def get_klines(symbol, interval='15m', limit=200):
+    res = session.get_kline(
         category="linear",
         symbol=symbol,
         interval=interval,
@@ -33,16 +33,14 @@ def get_klines(symbol, interval='15', limit=200):
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
 
-    # Подгружаем исторические данные open interest
     oi_df = get_open_interest_historical(symbol, interval)
-    # Объединяем по времени открытия свечи
     df = pd.merge(df, oi_df, on='open_time', how='left')
     return df
 
-def get_open_interest(symbol, interval='15', timestamp=None):
+def get_open_interest(symbol, interval='15m', timestamp=None):
     interval_map = {
-        '15': '15m', '30': '30m', '60': '1h',
-        '240': '4h', 'D': '1d'
+        '15m': '15m', '30m': '30m', '1h': '1h',
+        '4h': '4h', '1d': '1d'
     }
     if interval not in interval_map:
         raise ValueError(f"Неизвестный интервал: {interval}")
@@ -50,10 +48,9 @@ def get_open_interest(symbol, interval='15', timestamp=None):
     if timestamp is None:
         raise ValueError("Для get_open_interest обязательно указать timestamp")
 
-    # Bybit API требует timestamp в миллисекундах
     ts_ms = int(timestamp)
 
-    res = session.get_open_interest_v5(
+    res = session.get_open_interest(
         category="linear",
         symbol=symbol,
         interval=interval_map[interval],
@@ -71,23 +68,20 @@ def get_open_interest(symbol, interval='15', timestamp=None):
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
-def get_open_interest_historical(symbol, interval='15', periods=7*24*4):
-    """
-    Получаем исторические данные Open Interest за последнюю неделю (7 дней * 24 часа * 4 интервала по 15 минут)
-    """
+def get_open_interest_historical(symbol, interval='15m', periods=7*24*4):
     interval_map = {
-        '15': timedelta(minutes=15),
-        '30': timedelta(minutes=30),
-        '60': timedelta(hours=1),
-        '240': timedelta(hours=4),
-        'D': timedelta(days=1),
+        '15m': timedelta(minutes=15),
+        '30m': timedelta(minutes=30),
+        '1h': timedelta(hours=1),
+        '4h': timedelta(hours=4),
+        '1d': timedelta(days=1),
     }
     if interval not in interval_map:
         raise ValueError(f"Неизвестный интервал: {interval}")
 
     delta = interval_map[interval]
     now = datetime.utcnow()
-    closed_interval_time = round_time(now, delta)  # округляем вниз до последнего закрытого интервала
+    closed_interval_time = round_time(now, delta)
 
     records = []
     for i in range(periods):
@@ -106,7 +100,7 @@ def get_open_interest_historical(symbol, interval='15', periods=7*24*4):
     return df_all.sort_values('open_time').reset_index(drop=True)
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_public_trading_records_v5(
+    res = session.get_public_trading_records(
         category="linear",
         symbol=symbol,
         limit=limit
@@ -137,7 +131,7 @@ def analyze_week(symbol):
     now = datetime.utcnow()
     start = now - timedelta(days=7)
 
-    all_klines = get_klines(symbol, interval='15', limit=2000)
+    all_klines = get_klines(symbol, interval='15m', limit=2000)
     all_klines = all_klines[(all_klines['open_time'] >= start) & (all_klines['open_time'] < now)].reset_index(drop=True)
 
     long_entries = 0
