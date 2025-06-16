@@ -3,9 +3,23 @@ from datetime import datetime, timedelta
 import pandas as pd
 import ta
 from pybit.unified_trading import HTTP
+import asyncio
+import logging
+import sys
+import traceback
+from fastapi import FastAPI
+from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.triggers.cron import CronTrigger
 
-# Инициализация сессии Bybit v5 (реальный рынок)
-session = HTTP(testnet=False)  # testnet=True для тестовой сети
+from bot import send_message  # твоя асинхронная функция отправки сообщений в Telegram
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+TIMEFRAME = '15'
+session = HTTP(testnet=False)  # testnet=True — тестовая сеть, false — реальный рынок
+
+app = FastAPI()
 
 def load_tickers(path="tickers.json"):
     with open(path, "r", encoding="utf-8") as f:
@@ -20,11 +34,21 @@ def get_klines(symbol, interval='15', limit=200):
     )
     if res['retCode'] != 0:
         raise Exception(f"Ошибка API get_klines: {res['retMsg']}")
-    df = pd.DataFrame(res['result']['list'])
-    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
-        if col in df.columns:
-            df[col] = df[col].astype(float)
+
+    raw_list = res['result']['list']
+    if not raw_list or not isinstance(raw_list[0], list):
+        raise Exception(f"Непредвиденный формат данных по {symbol}: {raw_list}")
+
+    # Формат: [open_time(ms), open, high, low, close, volume, turnover, confirm, cross_seq, timestamp(ms)]
+    df = pd.DataFrame(raw_list, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume',
+        'turnover', 'confirm', 'cross_seq', 'timestamp'
+    ])
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
+        df[col] = df[col].astype(float)
+
     return df.reset_index(drop=True)
 
 def get_trades(symbol, start_time, end_time, limit=1000):
@@ -62,7 +86,6 @@ def analyze_signal(df, cvd=0, oi_delta=0):
     macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
     adx = ta.trend.ADXIndicator(high, low, close, window=14).adx().iloc[-1]
 
-    # Для сравнения с предыдущим баром
     macd_hist_prev = ta.trend.MACD(close).macd_diff().iloc[-2]
 
     long_entry = (
@@ -103,40 +126,71 @@ def analyze_signal(df, cvd=0, oi_delta=0):
         }
     }
 
-def analyze_week(symbol):
-    now = datetime.utcnow()
-    start = now - timedelta(days=7)
-    all_klines = get_klines(symbol, interval='15', limit=2000)
-    all_klines = all_klines[(all_klines['open_time'] >= start) & (all_klines['open_time'] < now)].reset_index(drop=True)
+async def analyze_and_send():
+    tickers = load_tickers()
+    messages = []
 
-    long_entries = 0
-    short_entries = 0
+    for ticker in tickers:
+        try:
+            df = get_klines(ticker, interval=TIMEFRAME)
+            # Получаем 15-минутный интервал последней свечи, для трейдов
+            candle_time = df['open_time'].iloc[-1]
+            start_trades = candle_time
+            end_trades = candle_time + timedelta(minutes=15)
+            trades = get_trades(ticker, start_trades, end_trades)
+            cvd_value = calculate_cvd(trades)
+            oi_delta = calculate_oi_delta(df)
 
-    for idx in range(len(all_klines)):
-        df_slice = all_klines.iloc[max(0, idx-200):idx+1]
-        if df_slice.empty:
-            continue
+            signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta)
+            d = signals['details']
 
-        candle_time = df_slice['open_time'].iloc[-1]
-        start_trades = candle_time
-        end_trades = candle_time + timedelta(minutes=15)
+            msg = (
+                f"📊 <b>{ticker}</b>\n"
+                f"Цена: {d['close']:.4f} | RSI: {d['rsi']:.1f} | MACD: {d['macd_hist']:.3f} | ADX: {d['adx']:.1f}\n"
+                f"CVD: {cvd_value:.1f} | ΔOI: {oi_delta:.1f}\n"
+                f"🟢 Лонг: {'✅' if signals['long_entry'] else '—'}\n"
+                f"🔴 Шорт: {'✅' if signals['short_entry'] else '—'}"
+            )
+            messages.append(msg)
+        except Exception as e:
+            logger.error(f"Ошибка при анализе {ticker}: {e}")
+            messages.append(f"❌ Ошибка анализа {ticker}: {e}")
 
-        trades = get_trades(symbol, start_trades, end_trades)
-        cvd = calculate_cvd(trades)
-        oi_delta = calculate_oi_delta(df_slice)
+    final_message = "\n\n".join(messages)
+    await send_message(final_message)
 
-        signals = analyze_signal(df_slice, cvd=cvd, oi_delta=oi_delta)
+scheduler = None
 
-        if signals['long_entry']:
-            long_entries += 1
-        if signals['short_entry']:
-            short_entries += 1
+def start_scheduler():
+    global scheduler
+    loop = asyncio.get_event_loop()
+    scheduler = AsyncIOScheduler(event_loop=loop)
 
-    print(f"{symbol} за последнюю неделю:")
-    print(f"  Входы в Лонг: {long_entries}")
-    print(f"  Входы в Шорт: {short_entries}")
+    async def async_job_wrapper():
+        await analyze_and_send()
+
+    def run_async_job():
+        asyncio.run_coroutine_threadsafe(async_job_wrapper(), loop)
+
+    # Запуск каждые 15 минут по часам: 00, 15, 30, 45
+    scheduler.add_job(run_async_job, trigger=CronTrigger(minute='0,15,30,45'))
+    scheduler.start()
+    logger.info("Scheduler запущен: анализ каждые 15 минут ровно")
+
+@app.on_event("startup")
+async def on_startup():
+    try:
+        start_scheduler()
+        await send_message("🚀 Бот запущен. Первый анализ будет в ближайший 15-минутный интервал.")
+        logger.info("Startup завершен, бот работает")
+    except Exception as e:
+        logger.error(f"Ошибка при старте: {e}")
+        traceback.print_exc(file=sys.stdout)
+
+@app.get("/")
+async def root():
+    return {"message": "Bot is running"}
 
 if __name__ == "__main__":
-    tickers = load_tickers("tickers.json")
-    for ticker in tickers:
-        analyze_week(ticker)
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000)
