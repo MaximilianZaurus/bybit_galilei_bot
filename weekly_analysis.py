@@ -26,7 +26,6 @@ def get_klines(symbol, interval='60', limit=200):
 
     raw_list = res['result']['list']
 
-    # Количество столбцов соответствует длине вложенных списков (обычно 7)
     df = pd.DataFrame(raw_list, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
     ])
@@ -36,13 +35,33 @@ def get_klines(symbol, interval='60', limit=200):
         df[col] = df[col].astype(float)
     return df
 
+def get_open_interest(symbol, interval='60', limit=168):
+    res = session.get_open_interest(
+        category="linear",
+        symbol=symbol,
+        intervalTime=interval,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"OI error for {symbol}: {res['retMsg']}")
+    raw = res['result']['list']
+    df = pd.DataFrame(raw, columns=["timestamp", "oi"])
+    df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
+    df['oi'] = df['oi'].astype(float)
+    return df
+
+def calculate_cvd(df):
+    df['delta'] = df['close'].diff()
+    df['cvd'] = (df['volume'] * df['delta'].apply(lambda x: 1 if x > 0 else -1 if x < 0 else 0)).cumsum()
+    return df
+
 def analyze_week():
     tickers = load_tickers()
     messages = []
 
     for symbol in tickers:
         try:
-            df = get_klines(symbol, interval='60', limit=168)  # 168 часов ≈ 1 неделя
+            df = get_klines(symbol, interval='60', limit=168)
             close = df['close']
 
             rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
@@ -52,10 +71,19 @@ def analyze_week():
 
             trend = '⏫ Uptrend' if macd_hist > macd_hist_prev else '⏬ Downtrend'
 
+            # CVD
+            df = calculate_cvd(df)
+            cvd_change = df['cvd'].iloc[-1] - df['cvd'].iloc[-2]
+
+            # Open Interest
+            oi_df = get_open_interest(symbol, interval='60', limit=168)
+            oi_change = oi_df['oi'].iloc[-1] - oi_df['oi'].iloc[-2]
+
             msg = (
                 f"<b>{symbol} - Weekly Overview</b>\n"
                 f"RSI: {rsi:.1f} | MACD hist: {macd_hist:.3f}\n"
-                f"{trend}"
+                f"{trend}\n"
+                f"OI Δ: {oi_change:.2f} | CVD Δ: {cvd_change:.2f}"
             )
             messages.append(msg)
         except Exception as e:
