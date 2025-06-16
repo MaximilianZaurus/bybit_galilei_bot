@@ -1,3 +1,4 @@
+# scheduler.py
 import asyncio
 import pandas as pd
 from datetime import datetime, timedelta
@@ -5,14 +6,15 @@ from pybit.unified_trading import HTTP
 from signals import analyze_signal
 from json import load as json_load
 
+# Инициализация сессии v5 API
 session = HTTP(testnet=False)
 
-# Загрузка тикеров из файла tickers.json
+# Загрузка тикеров из файла
 def load_tickers(filename="tickers.json"):
     with open(filename, "r", encoding="utf-8") as f:
         return json_load(f)
 
-# Получение свечей
+# Загрузка свечей
 def get_klines(symbol, interval='15', total_limit=2000):
     max_limit = 1000
     interval_map = {
@@ -48,21 +50,19 @@ def get_klines(symbol, interval='15', total_limit=2000):
         oldest_time = int(klines[-1][0]) // 1000
         end_time = oldest_time - interval_map[interval]
 
-    # Проверка: достаточное количество колонок
+    # Проверка, что пришёл open_interest
     if len(result[0]) < 8:
-        raise Exception("Недостаточно данных в свечах. Проверь возвращаемые поля API.")
+        raise Exception(f"⛔ Для {symbol} не пришёл open_interest. Проверь категорию и символ.")
 
     df = pd.DataFrame(result, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest'
     ])
-
     df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
         df[col] = df[col].astype(float)
-
     return df.sort_values('open_time').reset_index(drop=True)
 
-# Получение последних трейдов
+# Получение трейдов
 def get_trades(symbol, start_time, end_time, limit=1000):
     res = session.query_recent_trading_records(symbol=symbol, limit=limit)
     if res.get('retCode', 1) != 0:
@@ -75,7 +75,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     trades_df['isBuyerMaker'] = trades_df['isBuyerMaker'].astype(bool)
     return trades_df
 
-# CVD
+# Подсчёт CVD
 def calculate_cvd(trades_df):
     buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
@@ -83,8 +83,6 @@ def calculate_cvd(trades_df):
 
 # ΔOI
 def calculate_oi_delta(df, window=3):
-    if len(df) < window + 1:
-        return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
 
 # ADX
@@ -124,7 +122,7 @@ async def analyze_and_send(send_message):
             df = get_klines(ticker, interval='15', total_limit=2000)
             df = df[(df['open_time'] >= start) & (df['open_time'] < now)].reset_index(drop=True)
             if df.empty:
-                continue
+                raise Exception("Нет данных для анализа.")
 
             candle_time = df['open_time'].iloc[-1]
             trades = get_trades(ticker, candle_time, candle_time + timedelta(minutes=15))
@@ -146,11 +144,10 @@ async def analyze_and_send(send_message):
             await send_message(msg)
 
         except Exception as e:
-            await send_message(f"⚠️ Ошибка при анализе {ticker}: {e}")
+            await send_message(f"❌ Ошибка анализа {ticker}: {e}")
 
-# Тестовая отправка
+# Для отладки
 if __name__ == "__main__":
     async def dummy_send(msg):
         print(msg)
-
     asyncio.run(analyze_and_send(dummy_send))
