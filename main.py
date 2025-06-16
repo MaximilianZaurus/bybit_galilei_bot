@@ -29,8 +29,9 @@ app = FastAPI()
 # ✅ Асинхронный запуск недельного анализа
 async def analyze_and_report():
     try:
-        await asyncio.to_thread(analyze_week)  # Без аргументов!
-        await send_message("✅ Недельный анализ выполнен.")
+        message = await asyncio.to_thread(analyze_week)  # Получаем результат анализа
+        await send_message(message)                       # Отправляем в телегу полный отчет
+        logger.info("Недельный анализ отправлен")
     except Exception as e:
         error_msg = f"❌ Ошибка при недельном анализе: {e}"
         logger.error(error_msg)
