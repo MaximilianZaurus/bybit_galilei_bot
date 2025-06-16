@@ -25,16 +25,23 @@ def get_klines(symbol, interval='1h', limit=168):
 
     kline_list = res['result']['list']
 
-    # Важно: get_kline возвращает список списков — задаем имена колонок вручную
-    df = pd.DataFrame(kline_list, columns=[
-        'start', 'open', 'high', 'low', 'close', 'volume', 'turnover'
-    ])
-    df['open_time'] = pd.to_datetime(df['start'].astype(int), unit='s')
+    # Обработка: список списков или список словарей
+    if isinstance(kline_list[0], list):
+        df = pd.DataFrame(kline_list, columns=[
+            'start', 'open', 'high', 'low', 'close', 'volume', 'turnover'
+        ])
+        df['start'] = df['start'].astype(int)
+    else:
+        df = pd.DataFrame(kline_list)
+        df['start'] = df['start'].astype(int)
+
+    df['open_time'] = pd.to_datetime(df['start'], unit='s')
 
     # Приведение к float
-    numeric_cols = ['open', 'high', 'low', 'close', 'volume', 'turnover']
+    numeric_cols = ['open', 'high', 'low', 'close', 'volume']
     for col in numeric_cols:
         df[col] = df[col].astype(float)
+    df['turnover'] = df.get('turnover', 0.0).astype(float)
 
     return df[['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']]
 
@@ -49,7 +56,12 @@ def get_open_interest(symbol, interval='1h'):
         raise Exception(f"OI API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    df['open_time'] = pd.to_datetime(df['timestamp'].astype(int), unit='s')  # SECONDS
+
+    # Проверка на корректность данных
+    if 'timestamp' not in df or 'openInterest' not in df:
+        raise Exception("Invalid OI response format")
+
+    df['open_time'] = pd.to_datetime(df['timestamp'].astype(int), unit='s')
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
@@ -64,7 +76,11 @@ def get_trades(symbol, start_time, end_time):
         raise Exception(f"Trade API error: {res['retMsg']}")
 
     df = pd.DataFrame(res['result']['list'])
-    df['trade_time'] = pd.to_datetime(df['execTime'].astype(int), unit='ms')  # MILLISECONDS
+
+    if 'execTime' not in df or 'execQty' not in df or 'side' not in df:
+        raise Exception("Invalid trade history format")
+
+    df['trade_time'] = pd.to_datetime(df['execTime'].astype(int), unit='ms')
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['qty'] = df['execQty'].astype(float)
     df['isBuyerMaker'] = df['side'] == 'Sell'
