@@ -8,10 +8,10 @@ session = HTTP(testnet=False)
 
 def get_klines(symbol, interval='15m', limit=200):
     """
-    Получить 15-минутные свечи (или другие интервалы).
-    Важно: interval в формате '15m', '1h', '4h', '1d' и т.п.
+    Получить свечи с Bybit.
+    interval: '15m', '1h', '4h', '1d' и т.п.
     """
-    res = session.get_kline_v5(
+    res = session.get_kline(
         category="linear",
         symbol=symbol,
         interval=interval,
@@ -28,18 +28,16 @@ def get_klines(symbol, interval='15m', limit=200):
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
 
-    # Заглушка для open_interest, если не используется отдельно
+    # Заглушка для open_interest
     df['open_interest'] = 0.0
-
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
     """
-    Получить публичные трейды за промежуток времени.
-    Обратите внимание: API не поддерживает фильтр по времени,
-    поэтому фильтрация идёт на клиенте.
+    Получить публичные трейды за промежуток.
+    API не поддерживает фильтр по времени, фильтрация на клиенте.
     """
-    res = session.get_public_trading_records_v5(
+    res = session.get_public_trading_records(
         category="linear",
         symbol=symbol,
         limit=limit
@@ -58,7 +56,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
 
 def calculate_cvd(trades_df):
     """
-    Рассчитать CVD — разницу объёмов покупок и продаж.
+    CVD — разница объёмов покупок и продаж.
     """
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
@@ -66,8 +64,7 @@ def calculate_cvd(trades_df):
 
 def calculate_oi_delta(df, window=3):
     """
-    Простая дельта open_interest за окно.
-    Если open_interest не доступен — 0.
+    Дельта open_interest за окно.
     """
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
@@ -88,7 +85,6 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
     rsi_curr = rsi.iloc[-1]
     macd_hist_curr = macd_hist.iloc[-1]
     adx_curr = adx.iloc[-1]
-    close_curr = close.iloc[-1]
 
     cvd_positive = cvd > 0
     cvd_negative = cvd < 0
@@ -130,7 +126,7 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
             'rsi': rsi_curr,
             'macd_hist': macd_hist_curr,
             'adx': adx_curr,
-            'close': close_curr,
+            'close': close.iloc[-1],
             'cvd': cvd,
             'oi_delta': oi_delta
         }
@@ -139,10 +135,10 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
 if __name__ == "__main__":
     symbol = "ETHUSDT"
     df = get_klines(symbol, interval="15m", limit=200)
-    
+
     end_time = df['open_time'].iloc[-1] + timedelta(minutes=15)
     start_time = end_time - timedelta(minutes=5)
-    
+
     trades_df = get_trades(symbol, start_time, end_time)
 
     cvd = calculate_cvd(trades_df)
