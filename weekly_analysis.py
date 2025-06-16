@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
 from signals import analyze_signal  # Функция анализа из signals.py
 
-# Создание сессии
 session = HTTP(testnet=False)
 
 def load_tickers():
@@ -41,13 +40,11 @@ def get_open_interest(symbol, interval='15'):
     if interval not in interval_map:
         raise ValueError(f"Неизвестный интервал: {interval}")
 
-    now_ts = int(datetime.utcnow().timestamp() * 1000)
-
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
         interval=interval_map[interval],
-        intervalTime=now_ts
+        limit=200  # ⚠️ Заменили intervalTime на limit
     )
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
@@ -56,7 +53,7 @@ def get_open_interest(symbol, interval='15'):
     if not oi_list:
         raise Exception(f"❌ Пустой список open_interest для {symbol}")
 
-    # Автоопределение ключа времени
+    # Определяем имя временного ключа
     time_key = 'timestamp' if 'timestamp' in oi_list[0] else 'openTime'
 
     df = pd.DataFrame(oi_list)
@@ -79,7 +76,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['price'] = df['price'].astype(float)
     df['qty'] = df['qty'].astype(float)
-    df['isBuyerMaker'] = df['side'] == 'Sell'  # продавец = маркет-мейкер
+    df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
 def calculate_cvd(trades_df):
@@ -102,7 +99,7 @@ def analyze_week(symbol):
     long_entries = 0
     short_entries = 0
 
-    for idx in range(50, len(all_klines)):  # Пропустим первые 50, чтобы индикаторы стабилизировались
+    for idx in range(50, len(all_klines)):
         df_slice = all_klines.iloc[max(0, idx - 200):idx + 1]
         if df_slice.empty:
             continue
