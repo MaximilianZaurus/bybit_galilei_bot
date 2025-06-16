@@ -102,4 +102,3 @@ def analyze_week():
 
 if __name__ == "__main__":
     print(analyze_week())
-
