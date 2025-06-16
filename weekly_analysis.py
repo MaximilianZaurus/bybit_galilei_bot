@@ -50,9 +50,20 @@ def get_open_interest(symbol, interval='60', limit=168):
     df['oi'] = df['oi'].astype(float)
     return df
 
-def calculate_cvd(df):
-    df['delta'] = df['close'].diff()
-    df['cvd'] = (df['volume'] * df['delta'].apply(lambda x: 1 if x > 0 else -1 if x < 0 else 0)).cumsum()
+def get_trades(symbol, limit=1000):
+    res = session.get_public_trading_history(
+        category="linear",
+        symbol=symbol,
+        limit=limit
+    )
+    if res['retCode'] != 0:
+        raise Exception(f"Trades error for {symbol}: {res['retMsg']}")
+    trades = res['result']['list']
+    df = pd.DataFrame(trades)
+    df['price'] = df['price'].astype(float)
+    df['size'] = df['size'].astype(float)
+    df['side'] = df['side'].astype(str)
+    df['cvd'] = df.apply(lambda row: row['size'] if row['side'] == 'Buy' else -row['size'], axis=1).cumsum()
     return df
 
 def analyze_week():
@@ -71,13 +82,13 @@ def analyze_week():
 
             trend = '⏫ Uptrend' if macd_hist > macd_hist_prev else '⏬ Downtrend'
 
-            # CVD
-            df = calculate_cvd(df)
-            cvd_change = df['cvd'].iloc[-1] - df['cvd'].iloc[-2]
-
             # Open Interest
             oi_df = get_open_interest(symbol, interval='60', limit=168)
             oi_change = oi_df['oi'].iloc[-1] - oi_df['oi'].iloc[-2]
+
+            # Real CVD via trades
+            trades_df = get_trades(symbol, limit=1000)
+            cvd_change = trades_df['cvd'].iloc[-1] - trades_df['cvd'].iloc[-2]
 
             msg = (
                 f"<b>{symbol} - Weekly Overview</b>\n"
