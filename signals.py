@@ -1,12 +1,17 @@
 from pybit.unified_trading import HTTP
 import pandas as pd
 import ta
+from datetime import datetime, timedelta
 
-# Сессия
+# Инициализация сессии Bybit v5 (реальный режим)
 session = HTTP(testnet=False)
 
-def get_klines(symbol, interval='15', limit=200):
-    res = session.get_kline(
+def get_klines(symbol, interval='15m', limit=200):
+    """
+    Получить 15-минутные свечи (или другие интервалы).
+    Важно: interval в формате '15m', '1h', '4h', '1d' и т.п.
+    """
+    res = session.get_kline_v5(
         category="linear",
         symbol=symbol,
         interval=interval,
@@ -14,7 +19,7 @@ def get_klines(symbol, interval='15', limit=200):
     )
     if res['retCode'] != 0:
         raise Exception(f"Ошибка API: {res['retMsg']}")
-    
+
     kline_list = res['result']['list']
     df = pd.DataFrame(kline_list, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
@@ -22,21 +27,26 @@ def get_klines(symbol, interval='15', limit=200):
     df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
-    
-    # Заглушка open_interest, если она нужна (можно передавать из основного файла)
+
+    # Заглушка для open_interest, если не используется отдельно
     df['open_interest'] = 0.0
-    
+
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_public_trading_records(
+    """
+    Получить публичные трейды за промежуток времени.
+    Обратите внимание: API не поддерживает фильтр по времени,
+    поэтому фильтрация идёт на клиенте.
+    """
+    res = session.get_public_trading_records_v5(
         category="linear",
         symbol=symbol,
         limit=limit
     )
     if res['retCode'] != 0:
         raise Exception(f"Ошибка API trades: {res['retMsg']}")
-    
+
     trade_list = res['result']['list']
     df = pd.DataFrame(trade_list)
     df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
@@ -47,16 +57,26 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     return df
 
 def calculate_cvd(trades_df):
+    """
+    Рассчитать CVD — разницу объёмов покупок и продаж.
+    """
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
+    """
+    Простая дельта open_interest за окно.
+    Если open_interest не доступен — 0.
+    """
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
 
 def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
+    """
+    Анализ сигналов на основе RSI, MACD, ADX, CVD и OI delta.
+    """
     close = df['close']
     high = df['high']
     low = df['low']
@@ -116,14 +136,13 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
         }
     }
 
-# Мини-пример запуска
 if __name__ == "__main__":
-    from datetime import datetime, timedelta
-
     symbol = "ETHUSDT"
-    df = get_klines(symbol, interval="15", limit=200)
+    df = get_klines(symbol, interval="15m", limit=200)
+    
     end_time = df['open_time'].iloc[-1] + timedelta(minutes=15)
     start_time = end_time - timedelta(minutes=5)
+    
     trades_df = get_trades(symbol, start_time, end_time)
 
     cvd = calculate_cvd(trades_df)
