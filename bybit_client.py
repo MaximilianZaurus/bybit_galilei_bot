@@ -1,6 +1,7 @@
+from pybit.unified_trading import HTTP, WebSocket
 import os
 from collections import defaultdict
-from pybit.unified_trading import HTTP, WebSocket
+import threading
 
 API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
@@ -25,26 +26,25 @@ def update_oi_history(symbol: str):
 def get_oi_delta(symbol: str) -> float:
     history = OI_HISTORY[symbol]
     if len(history) < 3:
-        return 0
+        return 0.0
     return history[-1] - history[0]
+
+def handle_message(msg):
+    # msg — dict с данными от WS
+    for topic, data in msg.items():
+        if topic.startswith("trade."):
+            symbol = topic.split(".")[1]
+            for t in data:
+                qty = float(t['qty'])
+                side = t['side']
+                CVD[symbol] += qty if side == 'Buy' else -qty
 
 def subscribe_to_trades(symbols: list):
     topics = [f"trade.{sym}" for sym in symbols]
     ws.subscribe(topics)
-
-    def handle_message(msg):
-        for topic, data in msg.items():
-            if topic.startswith("trade."):
-                symbol = topic.split(".")[1]
-                for t in data:
-                    qty = float(t['qty'])
-                    side = t['side']
-                    CVD[symbol] += qty if side == 'Buy' else -qty
-
-    ws.callback = handle_message
+    ws.callback = handle_message  # или ws.set_callback(handle_message) в зависимости от версии
 
 def start_ws():
-    import threading
     t = threading.Thread(target=ws.run_forever)
     t.daemon = True
-    t.st
+    t.start()
