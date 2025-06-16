@@ -50,7 +50,7 @@ def get_klines(symbol, interval='15', limit=672):  # 15 мин * 672 = 7 дне�
         df[col] = df[col].astype(float)
     return df
 
-def get_open_interest(symbol, interval='15', limit=672):
+def get_open_interest(symbol, interval='15', limit=500):  # <= максимальное значение, возвращаемое API
     interval_str = INTERVAL_MAP.get(str(interval))
     if not interval_str:
         raise ValueError(f"Неподдерживаемый интервал для OI: {interval}")
@@ -66,7 +66,7 @@ def get_open_interest(symbol, interval='15', limit=672):
 
     raw = res['result']['list']
     if len(raw) < 2:
-        raise ValueError("Недостаточно данных для Open Interest")
+        raise ValueError(f"Недостаточно данных для Open Interest: получено {len(raw)} точек")
 
     df = pd.DataFrame(raw, columns=["timestamp", "oi"])
     df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
@@ -116,7 +116,7 @@ def analyze_week():
             macd_hist_prev = macd_hist_series.iloc[-2]
             trend = '⏫ Uptrend' if macd_hist > macd_hist_prev else '⏬ Downtrend'
 
-            oi_df = get_open_interest(symbol, interval='15', limit=672)
+            oi_df = get_open_interest(symbol, interval='15', limit=500)
             oi_change = oi_df['oi'].iloc[-1] - oi_df['oi'].iloc[-2]
 
             trades_df = get_trades(symbol, limit=1000)
