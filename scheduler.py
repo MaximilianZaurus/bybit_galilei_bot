@@ -97,7 +97,7 @@ async def analyze_and_send():
             msg = (
                 f"📊 <b>{ticker}</b>\n"
                 f"Цена: {d['close']:.4f} | RSI: {d['rsi']:.1f} | MACD: {d['macd_hist']:.3f}\n"
-                f"BB: [{d['bb_lower']:.2f} - {d['bb_upper']:.2f}] | CVD: {cvd_value:.1f} | ΔOI: {oi_delta:.1f}\n"
+                f"CVD: {cvd_value:.1f} | ΔOI: {oi_delta:.1f}\n"
                 f"🟢 Лонг: {'✅' if signals['long_entry'] else '—'}\n"
                 f"🔴 Шорт: {'✅' if signals['short_entry'] else '—'}"
             )
