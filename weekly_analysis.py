@@ -103,18 +103,38 @@ def analyze_single_symbol(symbol: str) -> str:
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
 
+    # Получение свечей
     df = get_klines(symbol, interval='1h', limit=168)
+    if df.empty or len(df) < 20:
+        raise Exception("Недостаточно данных по свечам")
+
+    # Получение OI
     oi_df = get_open_interest(symbol, interval='1h')
+    if oi_df.empty:
+        raise Exception("Недостаточно данных по Open Interest")
+
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
+    # Получение трейдов
     trades_df = get_trades(symbol, week_ago, now)
+    if trades_df.empty:
+        raise Exception("Нет трейдов за последние 7 дней")
+
+    # Расчёты
     cvd = calculate_cvd(trades_df)
     oi_delta = calculate_oi_delta(df)
 
-    close = df['close']
-    rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
-    macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
+    close = df['close'].dropna()
+    if close.empty or len(close) < 20:
+        raise Exception("Недостаточно цен закрытия для TA")
+
+    try:
+        rsi = ta.momentum.RSIIndicator(close, window=14).rsi().dropna().iloc[-1]
+        macd_hist = ta.trend.MACD(close).macd_diff().dropna().iloc[-1]
+    except Exception as e:
+        raise Exception(f"Ошибка расчета индикаторов: {e}")
+
     macd_dir = "↑" if macd_hist > 0 else "↓"
     trend = "⏫ Uptrend" if macd_hist > 0 else "⏬ Downtrend"
 
