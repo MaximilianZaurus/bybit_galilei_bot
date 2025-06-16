@@ -4,15 +4,15 @@ import ta
 import json
 from datetime import datetime, timedelta
 
-# ✅ Загрузка тикеров из tickers.json
+# --- Загрузка тикеров из файла ---
 def get_tickers():
     with open("tickers.json", "r") as f:
         return json.load(f)
 
-# ✅ Сессия Bybit
-session = HTTP(testnet=False)
+# --- Инициализация сессии Bybit v5 ---
+session = HTTP(testnet=False)  # Или testnet=True, если нужен тестнет
 
-# ✅ KLINES (свечи)
+# --- Получение свечей (Klines) ---
 def get_klines(symbol, interval='1h', limit=168):
     res = session.get_kline(
         category="linear",
@@ -23,20 +23,19 @@ def get_klines(symbol, interval='1h', limit=168):
     if res['retCode'] != 0:
         raise Exception(f"Kline API error: {res['retMsg']}")
     kline_list = res['result']['list']
-    df = pd.DataFrame(kline_list, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
-    ])
-    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
+    df = pd.DataFrame(kline_list)
+    df['open_time'] = pd.to_datetime(df['openTime'].astype(float), unit='ms')
+    # Приводим нужные колонки к float
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
-    return df
+    return df[['open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover']]
 
-# ✅ Open Interest (v5: через intervalTime)
+# --- Получение истории Open Interest ---
 def get_open_interest(symbol, interval='1h'):
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        intervalTime=interval
+        intervalTime=interval  # Обязательно intervalTime (регистр!)
     )
     if res['retCode'] != 0:
         raise Exception(f"OI API error: {res['retMsg']}")
@@ -45,34 +44,39 @@ def get_open_interest(symbol, interval='1h'):
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
-# ✅ Трейды (по v5 get_trade_history)
+# --- Получение истории трейдов (trades) ---
 def get_trades(symbol, start_time, end_time):
     res = session.get_trade_history(
         category="linear",
-        symbol=symbol
+        symbol=symbol,
+        limit=1000  # максимум за один запрос
     )
     if res['retCode'] != 0:
         raise Exception(f"Trade API error: {res['retMsg']}")
     df = pd.DataFrame(res['result']['list'])
+    # В v5 колонка execTime в формате ISO или timestamp?
+    # В docs execTime — timestamp в ms, преобразуем:
     df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
+    # Фильтрация по времени
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['qty'] = df['execQty'].astype(float)
+    # По документации: side 'Buy' или 'Sell'; isBuyerMaker = True если продажа (Sell)
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
-# ✅ CVD (по трейдам)
+# --- Расчёт CVD ---
 def calculate_cvd(trades_df):
     buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
-# ✅ ΔOI (за последние N свечей)
+# --- Δ Open Interest за последние N свечей ---
 def calculate_oi_delta(df, window=3):
     if len(df) < window + 1 or 'open_interest' not in df.columns:
         return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
 
-# ✅ Анализ одного тикера
+# --- Анализ одного символа ---
 def analyze_single_symbol(symbol: str) -> str:
     now = datetime.utcnow()
     week_ago = now - timedelta(days=7)
@@ -94,7 +98,7 @@ def analyze_single_symbol(symbol: str) -> str:
 
     return f"{symbol}: RSI {rsi:.1f}, MACD {macd_hist:.3f} {macd_dir}, ΔOI {oi_delta:.1f}, CVD {cvd:.1f} {trend}"
 
-# ✅ Основной недельный анализ
+# --- Основной недельный анализ ---
 def analyze_week() -> str:
     tickers = get_tickers()
     result_lines = ["📊 Weekly Overview:"]
@@ -105,3 +109,7 @@ def analyze_week() -> str:
         except Exception as e:
             result_lines.append(f"{symbol}: ❌ Ошибка анализа: {e}")
     return "\n".join(result_lines)
+
+# --- Запуск ---
+if __name__ == "__main__":
+    print(analyze_week())
