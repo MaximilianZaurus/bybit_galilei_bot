@@ -23,11 +23,14 @@ def get_klines(symbol, interval='60', limit=200):
     )
     if res['retCode'] != 0:
         raise Exception(f"Kline error for {symbol}: {res['retMsg']}")
+
     raw_list = res['result']['list']
+
+    # Количество столбцов соответствует длине вложенных списков (обычно 7)
     df = pd.DataFrame(raw_list, columns=[
-        'open_time', 'open', 'high', 'low', 'close', 'volume',
-        'turnover', 'confirm', 'cross_seq', 'timestamp'
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
     ])
+
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
@@ -39,7 +42,7 @@ def analyze_week():
 
     for symbol in tickers:
         try:
-            df = get_klines(symbol, interval='60', limit=168)  # 168 часов ≈ неделя
+            df = get_klines(symbol, interval='60', limit=168)  # 168 часов ≈ 1 неделя
             close = df['close']
 
             rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
