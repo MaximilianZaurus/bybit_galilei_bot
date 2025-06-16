@@ -50,7 +50,7 @@ def get_open_interest(symbol, interval='15', timestamp=None):
     if timestamp is None:
         raise ValueError("Для get_open_interest обязательно указать timestamp")
 
-    # Переводим timestamp из мс в секунды
+    # Bybit API требует timestamp в секундах (integer)
     ts_seconds = int(timestamp / 1000)
 
     res = session.get_open_interest(
@@ -71,7 +71,10 @@ def get_open_interest(symbol, interval='15', timestamp=None):
     df['open_interest'] = df['openInterest'].astype(float)
     return df[['open_time', 'open_interest']]
 
-def get_open_interest_historical(symbol, interval='15', periods=200):
+def get_open_interest_historical(symbol, interval='15', periods=7*24*4):
+    """
+    Получаем исторические данные Open Interest за последнюю неделю (7 дней * 24 часа * 4 интервала по 15 минут)
+    """
     interval_map = {
         '15': timedelta(minutes=15),
         '30': timedelta(minutes=30),
@@ -84,9 +87,7 @@ def get_open_interest_historical(symbol, interval='15', periods=200):
 
     delta = interval_map[interval]
     now = datetime.utcnow()
-
-    # Округляем текущее время вниз до последнего закрытого интервала
-    closed_interval_time = round_time(now, delta)
+    closed_interval_time = round_time(now, delta)  # округляем вниз до последнего закрытого интервала
 
     records = []
     for i in range(periods):
