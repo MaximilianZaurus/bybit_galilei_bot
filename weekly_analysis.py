@@ -36,10 +36,24 @@ def get_klines(symbol, interval='15', limit=200):
     return df
 
 def get_open_interest(symbol, interval='15'):
+    # Bybit требует интервал в формате '15m', '1h', '4h', '1d'
+    interval_map = {
+        '15': '15m',
+        '30': '30m',
+        '60': '1h',
+        '240': '4h',
+        'D': '1d'
+    }
+    if interval not in interval_map:
+        raise ValueError(f"Неизвестный интервал: {interval}")
+
+    now_ts = int(datetime.utcnow().timestamp() * 1000)
+
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        interval=interval
+        interval=interval_map[interval],
+        intervalTime=now_ts
     )
     if res.get('retCode', 1) != 0:
         raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
@@ -51,7 +65,7 @@ def get_open_interest(symbol, interval='15'):
     return df[['open_time', 'open_interest']]
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_trade_history(
+    res = session.get_public_trading_records(
         category="linear",
         symbol=symbol,
         limit=limit
@@ -116,4 +130,4 @@ if __name__ == "__main__":
         try:
             analyze_week(ticker)
         except Exception as e:
-            print(f"Ошибка при анализе {ticker}: {e}")
+            print(f"❌ Ошибка анализа {ticker}: {e}")
