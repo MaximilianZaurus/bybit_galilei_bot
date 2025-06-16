@@ -6,7 +6,7 @@ import ta
 import logging
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger(__name__)
+logger = logging.getLogger("weekly_analysis")
 
 session = HTTP(testnet=False)
 
@@ -38,7 +38,7 @@ def get_klines(symbol, interval="15", limit=672):
         df[c] = df[c].astype(float)
     return df
 
-def get_open_interest(symbol, interval="15", limit=672):
+def get_open_interest(symbol, interval="60", limit=168):
     interval_str = INTERVAL_MAP.get(str(interval))
     if not interval_str:
         raise ValueError(f"Unsupported interval for Open Interest: {interval}")
@@ -81,13 +81,12 @@ def analyze_week():
             mh, mprev = macd.iloc[-1], macd.iloc[-2]
             trend = "↑" if mh > mprev else "↓"
 
-            oi = get_open_interest(sym)
+            oi = get_open_interest(sym, interval="60", limit=168)
             if oi is None:
                 oi_d = "N/A"
             else:
                 oi_d = oi["openInterest"].iloc[-1] - oi["openInterest"].iloc[-2]
 
-            # Временно отключаем CVD
             msgs.append(
                 f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}"
             )
