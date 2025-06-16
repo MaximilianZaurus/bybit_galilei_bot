@@ -4,50 +4,61 @@ from datetime import datetime, timedelta
 from pybit.unified_trading import HTTP
 from signals import analyze_signal  # твоя функция из signals.py
 
-session = HTTP()
+# Создание сессии
+session = HTTP(testnet=False)
 
 def load_tickers():
     with open('tickers.json', 'r', encoding='utf-8') as f:
         return json.load(f)
 
 def get_klines(symbol, interval='15', limit=200):
-    res = session.get_kline(symbol=symbol, interval=interval, limit=limit)
-    if 'retCode' in res and res['retCode'] != 0:
-        raise Exception(f"Ошибка API: {res.get('retMsg', 'Неизвестная ошибка')}")
-    if 'result' not in res:
-        raise Exception("Нет данных в ответе API")
+    res = session.get_kline(
+        category="linear",  # ← ОБЯЗАТЕЛЬНО в V5
+        symbol=symbol,
+        interval=interval,
+        limit=limit
+    )
 
-    df = pd.DataFrame(res['result'])
-    df['open_time'] = pd.to_datetime(df['openTime'], unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'openInterest']:
+    if res.get('retCode', 1) != 0:
+        raise Exception(f"Ошибка API: {res.get('retMsg', 'Неизвестная ошибка')}")
+
+    kline_list = res['result']['list']
+    df = pd.DataFrame(kline_list, columns=[
+        'open_time', 'open', 'high', 'low', 'close',
+        'volume', 'turnover'
+    ])
+    df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
-    df.rename(columns={'openInterest': 'open_interest', 'openTime': 'open_time'}, inplace=True)
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_recent_trades(symbol=symbol, limit=limit)
-    if 'retCode' in res and res['retCode'] != 0:
-        raise Exception(f"Ошибка API trades: {res.get('retMsg', 'Неизвестная ошибка')}")
-    if 'result' not in res:
-        raise Exception("Нет данных в ответе API trades")
+    res = session.get_public_trading_records(
+        category="linear",  # ← ОБЯЗАТЕЛЬНО
+        symbol=symbol,
+        limit=limit
+    )
 
-    trades_df = pd.DataFrame(res['result'])
-    trades_df['trade_time'] = pd.to_datetime(trades_df['tradeTime'], unit='ms')
-    trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] < end_time)]
-    for col in ['price', 'qty']:
-        trades_df[col] = trades_df[col].astype(float)
-    trades_df['isBuyerMaker'] = trades_df['isBuyerMaker'].astype(bool)
-    return trades_df
+    if res.get('retCode', 1) != 0:
+        raise Exception(f"Ошибка API trades: {res.get('retMsg', 'Неизвестная ошибка')}")
+
+    trade_list = res['result']['list']
+    df = pd.DataFrame(trade_list)
+    df['trade_time'] = pd.to_datetime(df['execTime'].astype(float), unit='ms')
+    df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
+    df['price'] = df['price'].astype(float)
+    df['qty'] = df['qty'].astype(float)
+    df['isBuyerMaker'] = df['side'] == 'Sell'  # Покупатель с мейкером — это продажа
+    return df
 
 def calculate_cvd(trades_df):
-    buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
-    sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
+    buy_volume = trades_df[~trades_df['isBuyerMaker']]['qty'].sum()
+    sell_volume = trades_df[trades_df['isBuyerMaker']]['qty'].sum()
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    if len(df) < window + 1:
-        return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
+    # Временно заглушка, так как нет OI в get_kline — можно отдельно запросить OI позже
+    return 0
 
 def analyze_week(symbol):
     now = datetime.utcnow()
