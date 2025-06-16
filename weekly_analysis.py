@@ -1,8 +1,13 @@
 from pybit.unified_trading import HTTP
 import pandas as pd
 import ta
+import json
 from datetime import datetime, timedelta
-from tickers import get_tickers  # функция, возвращающая список тикеров
+
+# ✅ Загрузка тикеров из tickers.json
+def get_tickers():
+    with open("tickers.json", "r") as f:
+        return json.load(f)
 
 session = HTTP(testnet=False)
 
@@ -79,14 +84,13 @@ def analyze_single_symbol(symbol: str) -> str:
     close = df['close']
     rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
     macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
-
     macd_dir = "↑" if macd_hist > 0 else "↓"
     trend = "⏫ Uptrend" if macd_hist > 0 else "⏬ Downtrend"
 
     return f"{symbol}: RSI {rsi:.1f}, MACD {macd_hist:.3f} {macd_dir}, ΔOI {oi_delta:.1f}, CVD {cvd:.1f} {trend}"
 
 def analyze_week() -> str:
-    tickers = get_tickers()  # ['BTCUSDT', 'ETHUSDT', ...]
+    tickers = get_tickers()
     result_lines = ["📊 Weekly Overview:"]
     for symbol in tickers:
         try:
