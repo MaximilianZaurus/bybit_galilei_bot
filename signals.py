@@ -1,42 +1,53 @@
+from pybit import usdt_perpetual
 import pandas as pd
 import ta
-from pybit.unified_trading import HTTP
+import time
+from datetime import datetime, timedelta
 
-# Инициализация клиента Bybit (впиши свои ключи и endpoint)
-client = HTTP(
-    endpoint="https://api.bybit.com",
-    api_key="YOUR_API_KEY",
-    api_secret="YOUR_API_SECRET"
-)
+# Bybit API (без API-ключей для публичных данных)
+session = usdt_perpetual.HTTP(endpoint="https://api.bybit.com")
 
-def fetch_klines_with_oi(symbol: str, interval: str = "1", limit: int = 20) -> pd.DataFrame:
-    """
-    Получить свечи с Open Interest и вернуть в DataFrame.
-    """
-    response = client.get_kline(
-        symbol=symbol,
-        interval=interval,
-        limit=limit
-    )
-    data = response['result']
-    # Собираем данные в DataFrame
+def get_klines(symbol, interval='1', limit=200):
+    # Получаем свечи 1 минутные по умолчанию (можно менять)
+    res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
+    if res['ret_code'] != 0:
+        raise Exception(f"Ошибка API: {res['ret_msg']}")
+    data = res['result']
     df = pd.DataFrame(data)
-    # Приводим колонки к нужным типам
-    df['open'] = df['open'].astype(float)
-    df['high'] = df['high'].astype(float)
-    df['low'] = df['low'].astype(float)
-    df['close'] = df['close'].astype(float)
-    df['volume'] = df['volume'].astype(float)
-    df['open_interest'] = df['open_interest'].astype(float)
+    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
+    # Приводим колонки к float
+    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
+        df[col] = df[col].astype(float)
     return df
 
-def calculate_oi_delta(df: pd.DataFrame, periods: int = 3) -> float:
-    """
-    Считаем дельту OI за последние `periods` свечей.
-    """
-    if len(df) < periods + 1:
-        return 0.0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-1 - periods]
+def get_trades(symbol, start_time, end_time, limit=1000):
+    # Получаем сделки за период (макс 1000 за запрос)
+    # Bybit API возвращает только последние сделки, поэтому фильтруем вручную
+    res = session.query_recent_trading_records(symbol=symbol, limit=limit)
+    if res['ret_code'] != 0:
+        raise Exception(f"Ошибка API trades: {res['ret_msg']}")
+    trades = res['result']
+    trades_df = pd.DataFrame(trades)
+    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'], unit='ms')
+    trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] <= end_time)]
+    trades_df['price'] = trades_df['price'].astype(float)
+    trades_df['qty'] = trades_df['qty'].astype(float)
+    trades_df['isBuyerMaker'] = trades_df['isBuyerMaker'].astype(bool)
+    return trades_df
+
+def calculate_cvd(trades_df):
+    # CVD = сумма объёмов покупок - сумма объёмов продаж
+    # isBuyerMaker=True — значит продавец инициатор, значит покупатель лонг
+    # Т.к. биржа помечает maker'ов, то лонг — это когда isBuyerMaker=False
+    buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
+    sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
+    return buy_volume - sell_volume
+
+def calculate_oi_delta(df, window=3):
+    # Разница Open Interest за последние window свечей
+    if len(df) < window + 1:
+        return 0
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
 
 def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
     close = df['close']
@@ -51,7 +62,6 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
     rsi_curr = rsi.iloc[-1]
     cci_curr = cci.iloc[-1]
     macd_hist_curr = macd_hist.iloc[-1]
-
     macd_trend_up = macd_hist_curr > 0
     macd_trend_down = macd_hist_curr < 0
     close_curr = close.iloc[-1]
@@ -63,7 +73,7 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
     oi_rising = oi_delta > 0
     oi_falling = oi_delta < 0
 
-    bb_delta = (bb_upper - bb_lower) * 0.1  # 10% ширины полосы
+    bb_delta = (bb_upper - bb_lower) * 0.1
 
     long_entry = (
         (rsi_curr < 40 or cci_curr < -80) and
@@ -110,15 +120,34 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
         }
     }
 
-# Пример использования
-if __name__ == "__main__":
+def main():
     symbol = "ETHUSDT"
-    interval = "1"  # минутные свечи
+    interval = '1'  # 1 минутные свечи
+    print(f"Запуск анализа для {symbol} с интервалом {interval} мин")
 
-    df = fetch_klines_with_oi(symbol, interval)
-    oi_delta = calculate_oi_delta(df, periods=3)
-    # CVD нужно передавать извне, здесь просто 0
-    cvd = 0.0
+    # Получаем последние свечи
+    df = get_klines(symbol, interval=interval, limit=200)
+
+    # Определяем временные рамки для получения сделок (последние свечи)
+    end_time = df['open_time'].iloc[-1] + pd.Timedelta(minutes=1)
+    start_time = end_time - pd.Timedelta(minutes=5)  # последние 5 минут сделок
+
+    trades_df = get_trades(symbol, start_time, end_time)
+
+    cvd = calculate_cvd(trades_df)
+    oi_delta = calculate_oi_delta(df, window=3)
 
     signals = analyze_signal(df, cvd=cvd, oi_delta=oi_delta)
-    print(signals)
+
+    print("Текущие значения индикаторов:")
+    for k, v in signals['details'].items():
+        print(f"  {k}: {v}")
+
+    print("\nСигналы:")
+    print(f" ▶️ Вход в Лонг: {'✅' if signals['long_entry'] else '❌'}")
+    print(f" ⏹️ Выход из Лонга: {'✅' if signals['long_exit'] else '❌'}")
+    print(f" ▶️ Вход в Шорт: {'✅' if signals['short_entry'] else '❌'}")
+    print(f" ⏹️ Выход из Шорта: {'✅' if signals['short_exit'] else '❌'}")
+
+if __name__ == "__main__":
+    main()
