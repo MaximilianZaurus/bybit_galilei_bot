@@ -52,8 +52,9 @@ def get_open_interest(symbol, interval="15", limit=672):
     if res.get("retCode", 1) != 0:
         raise Exception(f"OI error for {symbol}: {res.get('retMsg')}")
     raw = res["result"]["list"]
+    logger.info(f"Open Interest data points for {symbol} at {interval_str}: {len(raw)}")
     if len(raw) < 2:
-        raise Exception(f"Not enough Open Interest data: got {len(raw)} points")
+        return None
     df = pd.DataFrame(raw)
     df["timestamp"] = pd.to_datetime(df["timestamp"].astype(float), unit="ms")
     df["openInterest"] = df["openInterest"].astype(float)
@@ -85,16 +86,18 @@ def analyze_week():
             trend = "↑" if mh > mprev else "↓"
 
             oi = get_open_interest(sym)
-            if len(oi) < 2:
-                raise Exception("мало данных по OI")
-            oi_d = oi["openInterest"].iloc[-1] - oi["openInterest"].iloc[-2]
+            if oi is None:
+                logger.warning(f"Open Interest data missing or insufficient for {sym}")
+                oi_d = "N/A"
+            else:
+                oi_d = oi["openInterest"].iloc[-1] - oi["openInterest"].iloc[-2]
 
             tr = get_trades(sym)
             if len(tr) < 2:
                 raise Exception("мало трейдов")
             cvd_d = tr["cvd"].iloc[-1] - tr["cvd"].iloc[-2]
 
-            msgs.append(f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d:.1f}, ΔCVD {cvd_d:.1f}")
+            msgs.append(f"{sym}: RSI {rsi:.1f}, MACD {mh:.3f} {trend}, ΔOI {oi_d if isinstance(oi_d, str) else f'{oi_d:.1f}'}, ΔCVD {cvd_d:.1f}")
         except Exception as e:
             logger.error(f"{sym}: {e}")
             msgs.append(f"{sym}: ❌ {e}")
