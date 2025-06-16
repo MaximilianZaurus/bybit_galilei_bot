@@ -6,7 +6,7 @@ from datetime import datetime, timedelta
 # Инициализация сессии Bybit v5 (реальный рынок)
 session = HTTP(testnet=False)  # testnet=True если нужна тестовая сеть
 
-def get_klines(symbol, interval='15m', limit=200):
+def get_klines(symbol, interval='1h', limit=200):
     res = session.get_kline(
         category="linear",
         symbol=symbol,
@@ -25,11 +25,12 @@ def get_klines(symbol, interval='15m', limit=200):
         df[col] = df[col].astype(float)
     return df
 
-def get_open_interest(symbol, interval='15m'):
+def get_open_interest(symbol, interval='1h', limit=200):
     res = session.get_open_interest(
         category="linear",
         symbol=symbol,
-        interval=interval
+        interval=interval,
+        limit=limit
     )
     if res['retCode'] != 0:
         raise Exception(f"Ошибка API OI: {res['retMsg']}")
@@ -55,7 +56,7 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     df = df[(df['trade_time'] >= start_time) & (df['trade_time'] < end_time)]
     df['price'] = df['price'].astype(float)
     df['qty'] = df['qty'].astype(float)
-    # Bybit v5: "side" == "Sell" значит продавец инициатор — значит покупатель maker? Тут isBuyerMaker True, если инициатор продажи
+    # "side" == "Sell" значит инициатор продажи, значит isBuyerMaker = True
     df['isBuyerMaker'] = df['side'] == 'Sell'
     return df
 
@@ -130,14 +131,15 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
 
 if __name__ == "__main__":
     symbol = "ETHUSDT"
+    interval = "1h"  # часовой интервал
 
-    df = get_klines(symbol, interval="15m", limit=200)
-    oi_df = get_open_interest(symbol, interval="15m")
+    df = get_klines(symbol, interval=interval, limit=200)
+    oi_df = get_open_interest(symbol, interval=interval, limit=200)
 
     df = pd.merge(df, oi_df, on='open_time', how='left')
     df['open_interest'] = df['open_interest'].fillna(method='ffill')
 
-    # Последний закрытый интервал для трейдов — 15 минут после последней свечи
+    # Для трейдов берем последние 15 минут после последней часовой свечи
     end_time = df['open_time'].iloc[-1] + timedelta(minutes=15)
     start_time = end_time - timedelta(minutes=15)
 
