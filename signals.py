@@ -1,28 +1,19 @@
-from pybit import usdt_perpetual
+from pybit import HTTP
 import pandas as pd
 import ta
-import time
-from datetime import datetime, timedelta
-
-# Bybit API (без API-ключей для публичных данных)
-session = usdt_perpetual.HTTP(endpoint="https://api.bybit.com")
 
 def get_klines(symbol, interval='1', limit=200):
-    # Получаем свечи 1 минутные по умолчанию (можно менять)
     res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
     if res['ret_code'] != 0:
         raise Exception(f"Ошибка API: {res['ret_msg']}")
     data = res['result']
     df = pd.DataFrame(data)
     df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    # Приводим колонки к float
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
         df[col] = df[col].astype(float)
     return df
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    # Получаем сделки за период (макс 1000 за запрос)
-    # Bybit API возвращает только последние сделки, поэтому фильтруем вручную
     res = session.query_recent_trading_records(symbol=symbol, limit=limit)
     if res['ret_code'] != 0:
         raise Exception(f"Ошибка API trades: {res['ret_msg']}")
@@ -36,15 +27,11 @@ def get_trades(symbol, start_time, end_time, limit=1000):
     return trades_df
 
 def calculate_cvd(trades_df):
-    # CVD = сумма объёмов покупок - сумма объёмов продаж
-    # isBuyerMaker=True — значит продавец инициатор, значит покупатель лонг
-    # Т.к. биржа помечает maker'ов, то лонг — это когда isBuyerMaker=False
     buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
     sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    # Разница Open Interest за последние window свечей
     if len(df) < window + 1:
         return 0
     return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
@@ -121,16 +108,18 @@ def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dic
     }
 
 def main():
+    global session
+    session = HTTP(endpoint="https://api.bybit.com")
+
     symbol = "ETHUSDT"
-    interval = '1'  # 1 минутные свечи
+    interval = '1'  # 1 минута
+
     print(f"Запуск анализа для {symbol} с интервалом {interval} мин")
 
-    # Получаем последние свечи
     df = get_klines(symbol, interval=interval, limit=200)
 
-    # Определяем временные рамки для получения сделок (последние свечи)
     end_time = df['open_time'].iloc[-1] + pd.Timedelta(minutes=1)
-    start_time = end_time - pd.Timedelta(minutes=5)  # последние 5 минут сделок
+    start_time = end_time - pd.Timedelta(minutes=5)
 
     trades_df = get_trades(symbol, start_time, end_time)
 
