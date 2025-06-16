@@ -17,7 +17,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEFRAME = '15'
-session = HTTP(testnet=False)  # testnet=True — тестовая сеть, false — реальный рынок
+session = HTTP(testnet=False)
 
 app = FastAPI()
 
@@ -39,7 +39,6 @@ def get_klines(symbol, interval='15', limit=200):
     if not raw_list or not isinstance(raw_list[0], list):
         raise Exception(f"Непредвиденный формат данных по {symbol}: {raw_list}")
 
-    # Формат: [open_time(ms), open, high, low, close, volume, turnover, confirm, cross_seq, timestamp(ms)]
     df = pd.DataFrame(raw_list, columns=[
         'open_time', 'open', 'high', 'low', 'close', 'volume',
         'turnover', 'confirm', 'cross_seq', 'timestamp'
@@ -73,9 +72,9 @@ def calculate_cvd(trades_df):
     return buy_volume - sell_volume
 
 def calculate_oi_delta(df, window=3):
-    if len(df) < window + 1 or 'open_interest' not in df.columns:
+    if len(df) < window + 1:
         return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1]
+    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window - 1] if 'open_interest' in df else 0
 
 def analyze_signal(df, cvd=0, oi_delta=0):
     close = df['close']
@@ -83,10 +82,10 @@ def analyze_signal(df, cvd=0, oi_delta=0):
     low = df['low']
 
     rsi = ta.momentum.RSIIndicator(close, window=14).rsi().iloc[-1]
-    macd_hist = ta.trend.MACD(close).macd_diff().iloc[-1]
+    macd = ta.trend.MACD(close)
+    macd_hist = macd.macd_diff().iloc[-1]
+    macd_hist_prev = macd.macd_diff().iloc[-2]
     adx = ta.trend.ADXIndicator(high, low, close, window=14).adx().iloc[-1]
-
-    macd_hist_prev = ta.trend.MACD(close).macd_diff().iloc[-2]
 
     long_entry = (
         (adx > 20) and
@@ -133,7 +132,6 @@ async def analyze_and_send():
     for ticker in tickers:
         try:
             df = get_klines(ticker, interval=TIMEFRAME)
-            # Получаем 15-минутный интервал последней свечи, для трейдов
             candle_time = df['open_time'].iloc[-1]
             start_trades = candle_time
             end_trades = candle_time + timedelta(minutes=15)
@@ -159,6 +157,30 @@ async def analyze_and_send():
     final_message = "\n\n".join(messages)
     await send_message(final_message)
 
+def analyze_week(symbol):
+    now = datetime.utcnow()
+    start = now - timedelta(days=7)
+    df = get_klines(symbol, interval=TIMEFRAME, limit=2000)
+    df = df[(df['open_time'] >= start) & (df['open_time'] < now)].reset_index(drop=True)
+
+    long_entries = 0
+    short_entries = 0
+
+    for idx in range(200, len(df)):
+        df_slice = df.iloc[idx - 200:idx + 1]
+        candle_time = df_slice['open_time'].iloc[-1]
+        trades = get_trades(symbol, candle_time, candle_time + timedelta(minutes=15))
+        cvd = calculate_cvd(trades)
+        oi_delta = calculate_oi_delta(df_slice)
+
+        signals = analyze_signal(df_slice, cvd, oi_delta)
+        if signals['long_entry']:
+            long_entries += 1
+        if signals['short_entry']:
+            short_entries += 1
+
+    print(f"{symbol} — за неделю: 🟢 Лонг: {long_entries}, 🔴 Шорт: {short_entries}")
+
 scheduler = None
 
 def start_scheduler():
@@ -172,7 +194,6 @@ def start_scheduler():
     def run_async_job():
         asyncio.run_coroutine_threadsafe(async_job_wrapper(), loop)
 
-    # Запуск каждые 15 минут по часам: 00, 15, 30, 45
     scheduler.add_job(run_async_job, trigger=CronTrigger(minute='0,15,30,45'))
     scheduler.start()
     logger.info("Scheduler запущен: анализ каждые 15 минут ровно")
