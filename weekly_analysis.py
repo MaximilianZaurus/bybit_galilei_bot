@@ -15,78 +15,98 @@ def round_time(dt, delta):
     rounded = seconds - (seconds % delta.total_seconds())
     return datetime(1970, 1, 1) + timedelta(seconds=rounded)
 
-def get_klines(symbol, interval='15m', limit=2000):
-    res = session.get_kline(
+def get_klines(symbol, interval='15', limit=200):
+    res = session.get_kline_v5(
         category="linear",
         symbol=symbol,
         interval=interval,
         limit=limit
     )
     if res.get('retCode', 1) != 0:
-        raise Exception(f"Ошибка API get_kline: {res.get('retMsg', 'Неизвестная ошибка')}")
+        raise Exception(f"Ошибка API: {res.get('retMsg', 'Неизвестная ошибка')}")
 
     kline_list = res['result']['list']
-    df = pd.DataFrame(kline_list)
-    # Колонки должны соответствовать в ответе: open_time, open, high, low, close, volume, turnover
-    # Проверим, есть ли open_time — обычно это timestamp в ms
+    df = pd.DataFrame(kline_list, columns=[
+        'open_time', 'open', 'high', 'low', 'close', 'volume', 'turnover'
+    ])
     df['open_time'] = pd.to_datetime(df['open_time'].astype(float), unit='ms')
     for col in ['open', 'high', 'low', 'close', 'volume', 'turnover']:
         df[col] = df[col].astype(float)
 
-    # Подгружаем исторические данные open interest (обновим функцию ниже)
+    # Подгружаем исторические данные open interest
     oi_df = get_open_interest_historical(symbol, interval)
+    # Объединяем по времени открытия свечи
     df = pd.merge(df, oi_df, on='open_time', how='left')
     return df
 
-def get_open_interest_historical(symbol, interval='15m', periods=7*24*4):
-    """
-    Получаем исторические данные Open Interest за последнюю неделю (7 дней * 24 часа * 4 интервала по 15 минут)
-    При этом делаем batch-запросы по интервалу времени, а не по отдельным timestamp.
-    """
-
-    delta_map = {
-        '15m': timedelta(minutes=15),
-        '30m': timedelta(minutes=30),
-        '1h': timedelta(hours=1),
-        '4h': timedelta(hours=4),
-        '1d': timedelta(days=1),
+def get_open_interest(symbol, interval='15', timestamp=None):
+    interval_map = {
+        '15': '15m', '30': '30m', '60': '1h',
+        '240': '4h', 'D': '1d'
     }
-
-    if interval not in delta_map:
+    if interval not in interval_map:
         raise ValueError(f"Неизвестный интервал: {interval}")
 
-    now = datetime.utcnow()
-    end_time = round_time(now, delta_map[interval])
-    start_time = end_time - delta_map[interval] * periods
+    if timestamp is None:
+        raise ValueError("Для get_open_interest обязательно указать timestamp")
 
-    start_ts = int(start_time.timestamp() * 1000)  # в миллисекундах
-    end_ts = int(end_time.timestamp() * 1000)
+    # Bybit API требует timestamp в миллисекундах
+    ts_ms = int(timestamp)
 
-    # Вызов unified_trading get_open_interest batch
-    # Обратите внимание на документацию pybit, параметры могут называться startTime и endTime
-    res = session.get_open_interest(
+    res = session.get_open_interest_v5(
         category="linear",
         symbol=symbol,
-        interval=interval,
-        startTime=start_ts,
-        endTime=end_ts
+        interval=interval_map[interval],
+        intervalTime=ts_ms
     )
     if res.get('retCode', 1) != 0:
-        raise Exception(f"Ошибка API get_open_interest: {res.get('retMsg', 'Неизвестная ошибка')}")
+        raise Exception(f"Ошибка OI: {res.get('retMsg', 'Неизвестная ошибка')}")
 
     oi_list = res['result']['list']
     if not oi_list:
-        raise Exception(f"Нет данных Open Interest для {symbol} за период {start_time} - {end_time}")
+        raise Exception(f"❌ Пустой список open_interest для {symbol} (ts={ts_ms})")
 
     df = pd.DataFrame(oi_list)
-    # timestamp приходит в миллисекундах (или секундах?) — проверить по доке
-    # Допустим в ms
     df['open_time'] = pd.to_datetime(df['timestamp'].astype(float), unit='ms')
     df['open_interest'] = df['openInterest'].astype(float)
-    return df[['open_time', 'open_interest']].sort_values('open_time').reset_index(drop=True)
+    return df[['open_time', 'open_interest']]
+
+def get_open_interest_historical(symbol, interval='15', periods=7*24*4):
+    """
+    Получаем исторические данные Open Interest за последнюю неделю (7 дней * 24 часа * 4 интервала по 15 минут)
+    """
+    interval_map = {
+        '15': timedelta(minutes=15),
+        '30': timedelta(minutes=30),
+        '60': timedelta(hours=1),
+        '240': timedelta(hours=4),
+        'D': timedelta(days=1),
+    }
+    if interval not in interval_map:
+        raise ValueError(f"Неизвестный интервал: {interval}")
+
+    delta = interval_map[interval]
+    now = datetime.utcnow()
+    closed_interval_time = round_time(now, delta)  # округляем вниз до последнего закрытого интервала
+
+    records = []
+    for i in range(periods):
+        interval_time = closed_interval_time - i * delta
+        ts_ms = int(interval_time.timestamp() * 1000)
+        try:
+            df = get_open_interest(symbol, interval=interval, timestamp=ts_ms)
+            records.append(df.iloc[0])
+        except Exception as e:
+            print(f"Ошибка OI для {symbol} ts={ts_ms}: {e}")
+
+    if not records:
+        raise Exception(f"Нет данных open_interest для {symbol}")
+
+    df_all = pd.DataFrame(records)
+    return df_all.sort_values('open_time').reset_index(drop=True)
 
 def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.get_public_trading_records(
+    res = session.get_public_trading_records_v5(
         category="linear",
         symbol=symbol,
         limit=limit
@@ -117,7 +137,7 @@ def analyze_week(symbol):
     now = datetime.utcnow()
     start = now - timedelta(days=7)
 
-    all_klines = get_klines(symbol, interval='15m', limit=2000)
+    all_klines = get_klines(symbol, interval='15', limit=2000)
     all_klines = all_klines[(all_klines['open_time'] >= start) & (all_klines['open_time'] < now)].reset_index(drop=True)
 
     long_entries = 0
