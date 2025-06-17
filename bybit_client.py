@@ -1,12 +1,10 @@
 import os
 import json
-import asyncio
 import logging
 from collections import defaultdict
 from pybit.unified_trading import HTTP, WebSocket
 
 logger = logging.getLogger(__name__)
-
 CVD_FILE = "cvd_data.json"
 
 class BybitClient:
@@ -59,35 +57,9 @@ class BybitClient:
             raise TypeError("All tickers must be strings")
 
         logger.info(f"Subscribing to trades: {tickers}")
-
-        for ticker in tickers:
-            topic = f"trade.{ticker}"
-            self.ws.subscribe(topic, callback=self.handle_message)
-
+        topics = [f"trade.{ticker}" for ticker in tickers]
+        self.ws.subscribe(topics, callback=self.handle_message)
         logger.info("Subscriptions sent")
-
-    async def fetch_open_interest(self, symbol: str) -> float:
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(
-            None,
-            lambda: self.http.get_open_interest(symbol=symbol, category=self.category)
-        )
-        if resp.get('result') and 'openInterest' in resp['result']:
-            return float(resp['result']['openInterest'])
-        raise ValueError(f"Error fetching open interest for {symbol}: {resp}")
-
-    async def update_oi_history(self, symbol: str):
-        oi = await self.fetch_open_interest(symbol)
-        history = self.OI_HISTORY[symbol]
-        history.append(oi)
-        if len(history) > 3:
-            history.pop(0)
-
-    def get_oi_delta(self, symbol: str) -> float:
-        history = self.OI_HISTORY[symbol]
-        if len(history) < 3:
-            return 0.0
-        return history[-1] - history[0]
 
     def handle_message(self, msg):
         topic = msg.get("topic", "")
