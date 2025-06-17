@@ -26,6 +26,7 @@ class Scheduler:
             return json.load(f)
 
     async def start_ws_and_subscribe(self):
+        # Подписка с передачей callback уже внутри BybitClient.subscribe_to_trades
         self.client.subscribe_to_trades(self.tickers)
         await self.client.start_ws()
 
@@ -34,7 +35,6 @@ class Scheduler:
         for ticker in self.tickers:
             try:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
-
                 await self.client.update_oi_history(ticker)
                 oi_delta = self.client.get_oi_delta(ticker)
                 cvd_value = self.client.CVD[ticker]
@@ -43,7 +43,6 @@ class Scheduler:
                 d = signals['details']
 
                 price_change_percent = ((d['close'] - d['prev_close']) / d['prev_close']) * 100 if d['prev_close'] > 0 else 0
-
                 price_up = d['close'] > d['prev_close']
                 cvd_up = cvd_value > signals.get('prev_cvd', 0)
                 oi_up = oi_delta > 0
@@ -73,24 +72,22 @@ class Scheduler:
     def start(self):
         loop = asyncio.get_event_loop()
 
-        # Запускаем WebSocket в фоне
+        # Запускаем WebSocket в фоне, без await, чтоб не блокировать
         loop.create_task(self.start_ws_and_subscribe())
 
-        # Запускаем задачи по расписанию
+        # Добавляем задачи с асинхронными вызовами
         self.scheduler.add_job(
-            self.fetch_and_analyze,
+            lambda: asyncio.create_task(self.fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
             id="analyze_15m",
             replace_existing=True,
-            args=["15m"]
         )
 
         self.scheduler.add_job(
-            self.fetch_and_analyze,
+            lambda: asyncio.create_task(self.fetch_and_analyze("1h")),
             trigger=CronTrigger(minute="0"),
             id="analyze_1h",
             replace_existing=True,
-            args=["1h"]
         )
 
         self.scheduler.start()
