@@ -19,7 +19,7 @@ class BybitClient:
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-        self.category = "linear"  # USDⓈ-M фьючерсы
+        self.category = "linear"
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
@@ -56,6 +56,9 @@ class BybitClient:
 
     # --- WebSocket methods ---
 
+    async def start_ws(self):
+        logger.info("WebSocket автоматически запускается внутри Pybit V5 — явный run() не требуется.")
+
     def subscribe_to_trades(self, tickers: list):
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
@@ -64,6 +67,7 @@ class BybitClient:
         for ticker in tickers:
             topic_str = f"trade.{ticker}"
             self.ws.subscribe(topic=topic_str, callback=self.handle_message)
+
         logger.info("Подписки отправлены")
 
     # --- Open Interest ---
@@ -106,7 +110,7 @@ class BybitClient:
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
-    # --- Получение текущей цены ---
+    # --- Цена последней сделки ---
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
