@@ -1,7 +1,6 @@
 import asyncio
 import json
 import logging
-import functools
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -103,15 +102,16 @@ class Scheduler:
         loop = asyncio.get_event_loop()
         loop.create_task(self.safe_start_ws_and_subscribe())
 
+        # Добавляем задачи с лямбдами для правильного отложенного запуска
         self.scheduler.add_job(
-            functools.partial(asyncio.create_task, self.safe_fetch_and_analyze("15m")),
+            lambda: asyncio.create_task(self.safe_fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
             id="analyze_15m",
             replace_existing=True,
         )
 
         self.scheduler.add_job(
-            functools.partial(asyncio.create_task, self.safe_fetch_and_analyze("1h")),
+            lambda: asyncio.create_task(self.safe_fetch_and_analyze("1h")),
             trigger=CronTrigger(minute="0"),
             id="analyze_1h",
             replace_existing=True,
