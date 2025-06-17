@@ -66,10 +66,26 @@ class BybitClient:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
         logger.debug(f"Ответ get_tickers: {resp}")
-        if resp and isinstance(resp, dict) and 'result' in resp and isinstance(resp['result'], list):
-            for ticker in resp['result']:
-                if isinstance(ticker, dict) and ticker.get('symbol', '').upper() == symbol.upper():
-                    return float(ticker['lastPrice'])
+
+        if not resp or not isinstance(resp, dict):
+            raise ValueError(f"Пустой или неверный ответ от API get_tickers: {resp}")
+
+        if 'result' not in resp or not isinstance(resp['result'], list):
+            raise ValueError(f"В ответе отсутствует поле 'result' или оно не список: {resp}")
+
+        for ticker in resp['result']:
+            if not isinstance(ticker, dict):
+                continue
+            sym = ticker.get('symbol', '').upper()
+            last_price = ticker.get('lastPrice') or ticker.get('last_price')
+            logger.debug(f"Проверяем тикер: {sym} с ценой: {last_price}")
+            if sym == symbol.upper() and last_price is not None:
+                try:
+                    return float(last_price)
+                except Exception as e:
+                    logger.error(f"Ошибка конвертации цены в float для {symbol}: {e}")
+                    raise
+
         raise ValueError(f"Не удалось получить цену для {symbol}")
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
