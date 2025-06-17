@@ -79,19 +79,35 @@ class Scheduler:
         final_message = "\n\n".join(messages)
         await send_message(final_message)
 
+    # Обертка для безопасного запуска start_ws_and_subscribe с логированием ошибок
+    async def safe_start_ws_and_subscribe(self):
+        try:
+            await self.start_ws_and_subscribe()
+        except Exception as e:
+            logger.exception(f"Ошибка в start_ws_and_subscribe: {e}")
+
+    # Обертка для безопасного запуска fetch_and_analyze с логированием ошибок
+    async def safe_fetch_and_analyze(self, timeframe: str):
+        try:
+            await self.fetch_and_analyze(timeframe)
+        except Exception as e:
+            logger.exception(f"Ошибка в fetch_and_analyze ({timeframe}): {e}")
+
     def start(self):
         loop = asyncio.get_event_loop()
-        loop.create_task(self.start_ws_and_subscribe())
+        # Запускаем WS подписку с безопасной оберткой
+        loop.create_task(self.safe_start_ws_and_subscribe())
 
+        # Планируем задачи анализа с безопасной оберткой
         self.scheduler.add_job(
-            lambda: asyncio.create_task(self.fetch_and_analyze("15m")),
+            lambda: asyncio.create_task(self.safe_fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
             id="analyze_15m",
             replace_existing=True,
         )
 
         self.scheduler.add_job(
-            lambda: asyncio.create_task(self.fetch_and_analyze("1h")),
+            lambda: asyncio.create_task(self.safe_fetch_and_analyze("1h")),
             trigger=CronTrigger(minute="0"),
             id="analyze_1h",
             replace_existing=True,
