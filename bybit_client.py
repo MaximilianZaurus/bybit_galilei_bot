@@ -122,3 +122,24 @@ class BybitClient:
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
+    # --- Добавляем get_current_price ---
+
+    async def get_current_price(self, symbol: str) -> float:
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
+        logger.debug(f"Ответ get_tickers: {resp}")
+
+        if not resp or not isinstance(resp, dict):
+            raise ValueError(f"Пустой или неверный ответ от API get_tickers: {resp}")
+
+        result = resp.get('result')
+        if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
+            raise ValueError(f"Неверный формат результата get_tickers: {resp}")
+
+        for ticker in result['list']:
+            sym = ticker.get('symbol', '').upper()
+            last_price = ticker.get('lastPrice') or ticker.get('last_price')
+            if sym == symbol.upper() and last_price is not None:
+                return float(last_price)
+
+        raise ValueError(f"Не удалось найти цену для {symbol}")
