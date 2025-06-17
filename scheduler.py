@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import functools
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
@@ -23,11 +24,18 @@ class Scheduler:
         logger.info(f"Tickers loaded: {self.tickers} (type={type(self.tickers)})")
 
     def load_tickers(self):
-        with open("tickers.json", "r", encoding="utf-8") as f:
-            data = json.load(f)
-            if not isinstance(data, list):
-                raise TypeError(f"Tickers.json должен содержать список, а получено: {type(data)}")
-            return data
+        try:
+            with open("tickers.json", "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if not isinstance(data, list):
+                    raise TypeError(f"tickers.json должен содержать список, а получено: {type(data)}")
+                return data
+        except FileNotFoundError:
+            logger.error("Файл tickers.json не найден.")
+            return []
+        except Exception as e:
+            logger.error(f"Ошибка загрузки tickers.json: {e}")
+            return []
 
     async def start_ws_and_subscribe(self):
         logger.info(f"Подписка на тикеры: {self.tickers} (type={type(self.tickers)})")
@@ -96,14 +104,14 @@ class Scheduler:
         loop.create_task(self.safe_start_ws_and_subscribe())
 
         self.scheduler.add_job(
-            lambda: asyncio.run(self.safe_fetch_and_analyze("15m")),
+            functools.partial(asyncio.create_task, self.safe_fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
             id="analyze_15m",
             replace_existing=True,
         )
 
         self.scheduler.add_job(
-            lambda: asyncio.run(self.safe_fetch_and_analyze("1h")),
+            functools.partial(asyncio.create_task, self.safe_fetch_and_analyze("1h")),
             trigger=CronTrigger(minute="0"),
             id="analyze_1h",
             replace_existing=True,
