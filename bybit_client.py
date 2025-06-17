@@ -9,8 +9,10 @@ class BybitClient:
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
+        self.category = "linear"  # "linear" для USDⓈ-M фьючерсов, "inverse" для COIN-M
+
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
-        self.ws = WebSocket(testnet=False, channel_type="linear")  # или "inverse"
+        self.ws = WebSocket(testnet=False, channel_type=self.category)
         
         self.CVD = defaultdict(float)
         self.OI_HISTORY = defaultdict(list)
@@ -19,7 +21,7 @@ class BybitClient:
         self.ws_thread = None
 
     def fetch_open_interest(self, symbol: str) -> float:
-        resp = self.http.get_open_interest(symbol=symbol)
+        resp = self.http.get_open_interest(symbol=symbol, category=self.category)
         return float(resp['result']['open_interest'])
 
     def update_oi_history(self, symbol: str):
@@ -56,7 +58,8 @@ class BybitClient:
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, self.http.get_tickers)
+        # Используем lambda чтобы передать category параметр
+        resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
         if resp and 'result' in resp:
             for ticker in resp['result']:
                 if ticker['symbol'] == symbol:
