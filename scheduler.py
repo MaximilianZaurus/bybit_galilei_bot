@@ -31,10 +31,8 @@ class Scheduler:
             try:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
                 oi_history = await self.client.get_open_interest_history(ticker, TIMEFRAMES[timeframe])
-                # Расчёт дельты OI
                 oi_delta = self.calculate_oi_delta(oi_history)
                 oi_value = float(oi_history[-1]['openInterest']) if oi_history else 0.0
-                # Расчёт CVD (простейший - накопление дельт цены закрытия)
                 cvd_value = self.calculate_cvd(klines)
 
                 signals = analyze_signal(klines, cvd=cvd_value, oi_delta=oi_delta)
@@ -42,7 +40,6 @@ class Scheduler:
 
                 price_change_percent = ((d['close'] - d['prev_close']) / d['prev_close']) * 100 if d['prev_close'] > 0 else 0
 
-                # Формируем комментарий по твоей логике:
                 comment = ""
                 price_up = d['close'] > d['prev_close']
                 cvd_up = cvd_value > signals.get('prev_cvd', 0)
@@ -83,7 +80,6 @@ class Scheduler:
 
     @staticmethod
     def calculate_cvd(klines):
-        # CVD = накопленная дельта изменения цены закрытия
         closes = [float(k['close']) for k in klines]
         diffs = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
         return sum(diffs)
@@ -94,7 +90,6 @@ class Scheduler:
         def schedule_job(coro):
             asyncio.run_coroutine_threadsafe(coro, loop)
 
-        # Запуск анализа 15м свечей каждые 15 минут по часам
         self.scheduler.add_job(
             lambda: schedule_job(self.fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
@@ -102,7 +97,6 @@ class Scheduler:
             replace_existing=True,
         )
 
-        # Запуск анализа 1ч свечей каждый час
         self.scheduler.add_job(
             lambda: schedule_job(self.fetch_and_analyze("1h")),
             trigger=CronTrigger(minute="0"),
@@ -112,3 +106,8 @@ class Scheduler:
 
         self.scheduler.start()
         logger.info("Scheduler started: 15m every 15 mins, 1h every hour")
+
+
+def start_scheduler():
+    scheduler = Scheduler()
+    scheduler.start()
