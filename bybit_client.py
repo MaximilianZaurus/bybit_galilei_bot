@@ -9,6 +9,11 @@ logger = logging.getLogger(__name__)
 
 CVD_FILE = "cvd_data.json"
 
+TIMEFRAMES = {
+    "15m": "15",
+    "1h": "60"
+}
+
 class BybitClient:
     def __init__(self):
         API_KEY = os.getenv("BYBIT_API_KEY")
@@ -91,9 +96,10 @@ class BybitClient:
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
         logger.info(f"Подписка на тикеры: {tickers}")
-        for symbol in tickers:
+        for ticker in tickers:
             self.ws.subscribe(
-                topic=f"trade.{symbol}",
+                topic="trade",
+                symbol=ticker,
                 callback=self.handle_message
             )
 
@@ -122,6 +128,10 @@ class BybitClient:
         raise ValueError(f"Не удалось найти цену для {symbol}")
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
+        allowed_intervals = {"1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"}
+        if interval not in allowed_intervals:
+            raise ValueError(f"Неверный interval для get_kline: {interval}")
+
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(None, lambda: self.http.get_kline(
             symbol=symbol,
@@ -129,6 +139,7 @@ class BybitClient:
             limit=limit,
             category=self.category
         ))
+
         if resp and isinstance(resp, dict) and 'result' in resp and 'list' in resp['result']:
             return resp['result']['list']
         else:
