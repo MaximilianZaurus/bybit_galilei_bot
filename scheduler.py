@@ -15,24 +15,19 @@ TIMEFRAMES = {
     "1h": "60"
 }
 
-INTERVAL_MAPPING = {
-    "15m": "15min",
-    "1h": "60min"
-}
-
 class Scheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
         self.client = BybitClient()
         self.tickers = self.load_tickers()
 
-        # Запуск WebSocket и подписка на сделки для расчёта CVD
-        self.client.start_ws()
-        self.client.subscribe_to_trades(self.tickers)
-
     def load_tickers(self):
         with open("tickers.json", "r", encoding="utf-8") as f:
             return json.load(f)
+
+    async def start_ws_and_subscribe(self):
+        self.client.subscribe_to_trades(self.tickers)
+        await self.client.start_ws()
 
     async def fetch_and_analyze(self, timeframe: str):
         messages = []
@@ -49,7 +44,6 @@ class Scheduler:
 
                 price_change_percent = ((d['close'] - d['prev_close']) / d['prev_close']) * 100 if d['prev_close'] > 0 else 0
 
-                comment = ""
                 price_up = d['close'] > d['prev_close']
                 cvd_up = cvd_value > signals.get('prev_cvd', 0)
                 oi_up = oi_delta > 0
@@ -79,21 +73,24 @@ class Scheduler:
     def start(self):
         loop = asyncio.get_event_loop()
 
-        def schedule_job(coro):
-            asyncio.run_coroutine_threadsafe(coro, loop)
+        # Запускаем WebSocket в фоне
+        loop.create_task(self.start_ws_and_subscribe())
 
+        # Запускаем задачи по расписанию
         self.scheduler.add_job(
-            lambda: schedule_job(self.fetch_and_analyze("15m")),
+            self.fetch_and_analyze,
             trigger=CronTrigger(minute="0,15,30,45"),
             id="analyze_15m",
             replace_existing=True,
+            args=["15m"]
         )
 
         self.scheduler.add_job(
-            lambda: schedule_job(self.fetch_and_analyze("1h")),
+            self.fetch_and_analyze,
             trigger=CronTrigger(minute="0"),
             id="analyze_1h",
             replace_existing=True,
+            args=["1h"]
         )
 
         self.scheduler.start()
