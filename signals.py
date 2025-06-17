@@ -1,21 +1,8 @@
 import pandas as pd
 
 def analyze_signal(df: pd.DataFrame, cvd: float, oi_delta: float, prev_close: float = None, prev_cvd: float = 0.0) -> dict:
-    """
-    Анализ сигнала на основе цены закрытия, дельты открытого интереса (OI) и накопленной дельты объема (CVD).
-
-    Args:
-        df (pd.DataFrame): DataFrame с барами, должен содержать столбец 'close' и минимум 2 строки.
-        cvd (float): Текущее значение CVD (накопленная дельта объема).
-        oi_delta (float): Дельта открытого интереса (текущее OI минус OI 4 периода назад).
-        prev_close (float, optional): Цена закрытия предыдущего периода. Если None, берется из df.
-        prev_cvd (float, optional): Значение CVD предыдущего периода.
-
-    Returns:
-        dict: {'signal': str, 'details': dict} с сигналом и дополнительной информацией.
-    """
     if df.shape[0] < 2:
-        raise ValueError("DataFrame должен содержать минимум 2 строки для анализа")
+        raise ValueError("DataFrame must have at least 2 rows")
 
     close = df['close'].iloc[-1]
 
