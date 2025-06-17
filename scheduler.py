@@ -40,9 +40,7 @@ class Scheduler:
         logger.info(f"Подписка на тикеры: {self.tickers} (type={type(self.tickers)})")
         if not isinstance(self.tickers, list):
             raise TypeError(f"Ожидался список тикеров, а получено {type(self.tickers)}")
-        await self.client.start_ws()
         self.client.subscribe_to_trades(self.tickers)
-        asyncio.create_task(self.client.run_ws())
 
     async def fetch_and_analyze(self, timeframe: str):
         messages = []
