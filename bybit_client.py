@@ -7,7 +7,7 @@ API_KEY = os.getenv("BYBIT_API_KEY")
 API_SECRET = os.getenv("BYBIT_API_SECRET")
 
 http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
-ws = WebSocket(testnet=False)
+ws = WebSocket(testnet=False, channel_type="linear")  # <--- обязательно указать channel_type
 
 CVD = defaultdict(float)
 OI_HISTORY = defaultdict(list)
@@ -42,7 +42,7 @@ def handle_message(msg):
 def subscribe_to_trades(symbols: list):
     topics = [f"trade.{sym}" for sym in symbols]
     ws.subscribe(topics)
-    ws.callback = handle_message  # или ws.set_callback(handle_message) в зависимости от версии
+    ws.callback = handle_message  # или ws.set_callback(handle_message) если нужно
 
 def start_ws():
     t = threading.Thread(target=ws.run_forever)
