@@ -9,7 +9,7 @@ class BybitClient:
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-        self.category = "linear"  # "linear" для USDⓈ-M фьючерсов, "inverse" для COIN-M
+        self.category = "linear"  # "linear" для USDⓈ-M, "inverse" для COIN-M
 
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
@@ -20,15 +20,15 @@ class BybitClient:
         self.ws.callback = self.handle_message
         self.ws_thread = None
 
-    def fetch_open_interest(self, symbol: str) -> float:
-        resp = self.http.get_open_interest(symbol=symbol, category=self.category)
-        # Проверка на наличие результата и open_interest
+    async def fetch_open_interest(self, symbol: str) -> float:
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, lambda: self.http.get_open_interest(symbol=symbol, category=self.category))
         if resp.get('result') and 'open_interest' in resp['result']:
             return float(resp['result']['open_interest'])
         raise ValueError(f"Ошибка получения open interest для {symbol}: {resp}")
 
-    def update_oi_history(self, symbol: str):
-        oi = self.fetch_open_interest(symbol)
+    async def update_oi_history(self, symbol: str):
+        oi = await self.fetch_open_interest(symbol)
         history = self.OI_HISTORY[symbol]
         history.append(oi)
         if len(history) > 3:
@@ -69,13 +69,14 @@ class BybitClient:
                     return float(ticker['lastPrice'])
         raise ValueError(f"Не удалось получить цену для {symbol}")
 
-    def get_klines(self, symbol: str, interval: str, limit: int = 200):
-        resp = self.http.get_candlestick(
+    async def get_klines(self, symbol: str, interval: str, limit: int = 200):
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(None, lambda: self.http.get_candlestick(
             symbol=symbol,
             interval=interval,
             limit=limit,
             category=self.category
-        )
+        ))
         if resp and isinstance(resp, dict) and 'result' in resp and 'list' in resp['result']:
             return resp['result']['list']
         else:
