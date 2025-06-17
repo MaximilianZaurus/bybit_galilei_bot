@@ -71,7 +71,7 @@ class BybitClient:
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: self.http.get_candlestick(
+        resp = await loop.run_in_executor(None, lambda: self.http.get_kline(
             symbol=symbol,
             interval=interval,
             limit=limit,
