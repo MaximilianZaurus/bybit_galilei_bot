@@ -12,30 +12,28 @@ class BybitClient:
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-        self.category = "linear"  # "linear" для USDⓈ-M, "inverse" для COIN-M
-
+        self.category = "linear"  # USDⓈ-M фьючерсы
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
-        
-        self.CVD = defaultdict(float)
-        self.OI_HISTORY = defaultdict(list)
+
+        self.CVD = defaultdict(float)         # cumulative volume delta (накопленный дельта-объём)
+        self.OI_HISTORY = defaultdict(list)   # история open interest
 
         self.ws.callback = self.handle_message
         self.ws_thread = None
 
-    # Добавлен параметр interval с дефолтом "15min"
-    async def fetch_open_interest(self, symbol: str, interval: str = "15min") -> float:
+    async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
-            lambda: self.http.get_open_interest(symbol=symbol, category=self.category, interval=interval)
+            lambda: self.http.get_open_interest(symbol=symbol, category=self.category)
         )
-        if resp.get('result') and 'open_interest' in resp['result']:
-            return float(resp['result']['open_interest'])
+        if resp.get('result') and 'openInterest' in resp['result']:
+            return float(resp['result']['openInterest'])
         raise ValueError(f"Ошибка получения open interest для {symbol}: {resp}")
 
-    async def update_oi_history(self, symbol: str, interval: str = "15min"):
-        oi = await self.fetch_open_interest(symbol, interval)
+    async def update_oi_history(self, symbol: str):
+        oi = await self.fetch_open_interest(symbol)
         history = self.OI_HISTORY[symbol]
         history.append(oi)
         if len(history) > 3:
@@ -48,13 +46,17 @@ class BybitClient:
         return history[-1] - history[0]
 
     def handle_message(self, msg):
-        for topic, data in msg.items():
-            if topic.startswith("trade."):
-                symbol = topic.split(".")[1]
-                for t in data:
-                    qty = float(t['qty'])
-                    side = t['side']
-                    self.CVD[symbol] += qty if side == 'Buy' else -qty
+        topic = msg.get("topic", "")
+        data = msg.get("data", [])
+        if topic.startswith("trade."):
+            symbol = topic.split(".")[1]
+            for trade in data:
+                qty = float(trade['qty'])
+                side = trade['side']  # "Buy" или "Sell"
+                if side == "Buy":
+                    self.CVD[symbol] += qty
+                elif side == "Sell":
+                    self.CVD[symbol] -= qty
 
     def subscribe_to_trades(self, symbols: list):
         topics = [f"trade.{sym}" for sym in symbols]
@@ -76,22 +78,15 @@ class BybitClient:
 
         result = resp.get('result')
         if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
-            raise ValueError(f"В ответе отсутствует поле 'result.list' или оно не список: {resp}")
+            raise ValueError(f"Неверный формат результата get_tickers: {resp}")
 
         for ticker in result['list']:
-            if not isinstance(ticker, dict):
-                continue
             sym = ticker.get('symbol', '').upper()
             last_price = ticker.get('lastPrice') or ticker.get('last_price')
-            logger.debug(f"Проверяем тикер: {sym} с ценой: {last_price}")
             if sym == symbol.upper() and last_price is not None:
-                try:
-                    return float(last_price)
-                except Exception as e:
-                    logger.error(f"Ошибка конвертации цены в float для {symbol}: {e}")
-                    raise
+                return float(last_price)
 
-        raise ValueError(f"Не удалось получить цену для {symbol}")
+        raise ValueError(f"Не удалось найти цену для {symbol}")
 
     async def get_klines(self, symbol: str, interval: str, limit: int = 200):
         loop = asyncio.get_running_loop()
