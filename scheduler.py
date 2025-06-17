@@ -18,7 +18,11 @@ class Scheduler:
             with open(self.tickers_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
                 logger.info(f"Загружены тикеры: {data}")
-                return data.get("tickers", [])
+                if isinstance(data, list):
+                    return data
+                else:
+                    logger.error("Формат tickers.json неверный — ожидается список строк")
+                    return []
         except Exception as e:
             logger.error(f"Ошибка загрузки тикеров: {e}")
             return []
@@ -44,9 +48,7 @@ class Scheduler:
             return None
 
     async def run(self):
-        # Запускаем WS
         await self.client.start_ws()
-        # Подписываемся на трейды
         self.client.subscribe_to_trades(self.tickers)
 
         while True:
