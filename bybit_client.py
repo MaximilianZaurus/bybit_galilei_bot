@@ -2,7 +2,10 @@ import os
 import threading
 from collections import defaultdict
 import asyncio
+import logging
 from pybit.unified_trading import HTTP, WebSocket
+
+logger = logging.getLogger(__name__)
 
 class BybitClient:
     def __init__(self):
@@ -41,7 +44,6 @@ class BybitClient:
         return history[-1] - history[0]
 
     def handle_message(self, msg):
-        # msg — словарь вида {topic: data}
         for topic, data in msg.items():
             if topic.startswith("trade."):
                 symbol = topic.split(".")[1]
@@ -63,9 +65,10 @@ class BybitClient:
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
+        logger.debug(f"Ответ get_tickers: {resp}")
         if resp and isinstance(resp, dict) and 'result' in resp and isinstance(resp['result'], list):
             for ticker in resp['result']:
-                if isinstance(ticker, dict) and ticker.get('symbol') == symbol:
+                if isinstance(ticker, dict) and ticker.get('symbol', '').upper() == symbol.upper():
                     return float(ticker['lastPrice'])
         raise ValueError(f"Не удалось получить цену для {symbol}")
 
