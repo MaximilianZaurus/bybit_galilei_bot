@@ -92,7 +92,7 @@ class BybitClient:
             raise TypeError("tickers must be a list")
         topics = [f"trade.{ticker}" for ticker in tickers]
         logger.info(f"Подписка на топики: {topics}")
-        self.ws.subscribe(topics, self.handle_message)
+        self.ws.subscribe(topics, self.handle_message)  # <-- ключевое исправление: убрали return
 
     async def start_ws(self):
         await self.ws.connect()
