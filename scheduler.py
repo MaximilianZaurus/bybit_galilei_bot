@@ -43,14 +43,15 @@ class Scheduler:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
                 await self.client.update_oi_history(ticker)
                 oi_delta = self.client.get_oi_delta(ticker)
-                cvd_value = self.client.CVD[ticker]
+                cvd_value = self.client.CVD.get(ticker, 0.0)
+                prev_cvd = self.client.get_prev_cvd(ticker)
 
                 signals = analyze_signal(klines, cvd=cvd_value, oi_delta=oi_delta)
                 d = signals['details']
 
                 price_change_percent = ((d['close'] - d['prev_close']) / d['prev_close']) * 100 if d['prev_close'] > 0 else 0
                 price_up = d['close'] > d['prev_close']
-                cvd_up = cvd_value > signals.get('prev_cvd', 0)
+                cvd_up = cvd_value > prev_cvd
                 oi_up = oi_delta > 0
 
                 if price_up and oi_up and cvd_up:
@@ -68,8 +69,12 @@ class Scheduler:
                     f"{comment}"
                 )
                 messages.append(msg)
+
+                # Обновляем prev_cvd в клиенте
+                self.client.update_prev_cvd(ticker, cvd_value)
+
             except Exception as e:
-                logger.error(f"Ошибка при обработке {ticker} {timeframe}: {e}")
+                logger.exception(f"Ошибка при обработке {ticker} {timeframe}: {e}")
                 messages.append(f"❗ Ошибка с {ticker} ({timeframe}): {e}")
 
         final_message = "\n\n".join(messages)
@@ -81,7 +86,7 @@ class Scheduler:
         # Запускаем WebSocket подписку как фоновую задачу
         loop.create_task(self.start_ws_and_subscribe())
 
-        # Планируем задачи анализа с созданием корутин
+        # Планируем задачи анализа
         self.scheduler.add_job(
             lambda: asyncio.create_task(self.fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
