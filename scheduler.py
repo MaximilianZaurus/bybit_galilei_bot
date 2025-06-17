@@ -15,6 +15,11 @@ TIMEFRAMES = {
     "1h": "60"
 }
 
+INTERVAL_MAPPING = {
+    "15m": "15min",
+    "1h": "60min"
+}
+
 class Scheduler:
     def __init__(self):
         self.scheduler = AsyncIOScheduler()
@@ -30,8 +35,9 @@ class Scheduler:
         for ticker in self.tickers:
             try:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
-                # обновим историю OI асинхронно
-                await self.client.update_oi_history(ticker)
+
+                # Указание интервала явно (например, "15min" или "60min")
+                await self.client.update_oi_history(ticker, interval=INTERVAL_MAPPING[timeframe])
                 oi_delta = self.client.get_oi_delta(ticker)
                 cvd_value = self.client.CVD[ticker]
 
