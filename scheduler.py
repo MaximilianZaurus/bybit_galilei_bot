@@ -9,14 +9,15 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 from fastapi import FastAPI
 
-from bot import send_message       # асинхронная функция отправки сообщения в Telegram
-from signals import analyze_signal # функция анализа сигналов
+from bot import send_message       # твоя async функция отправки сообщений в телегу
+from signals import analyze_signal # твоя функция анализа сигналов
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 TIMEFRAME = '15'
 BASE_URL = "https://api.bybit.com/v5/market/kline"
+OI_URL = "https://api.bybit.com/v5/market/open-interest"
 
 app = FastAPI()
 
@@ -52,7 +53,7 @@ async def fetch_klines(ticker: str, limit=50) -> pd.DataFrame:
     return df
 
 async def get_open_interest_history(ticker: str) -> list[dict]:
-    url = f"https://api.bybit.com/v5/market/open-interest?category=linear&symbol={ticker}&interval=15"
+    url = f"{OI_URL}?category=linear&symbol={ticker}&interval={TIMEFRAME}"
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(url)
@@ -122,16 +123,33 @@ def start_scheduler():
     def run_async_job():
         asyncio.run_coroutine_threadsafe(async_job_wrapper(), loop)
 
-    # Каждые 15 минут по часам: 00, 15, 30, 45
+    # Запускаем задачу ровно по часам каждые 15 минут: 00, 15, 30, 45
     scheduler.add_job(run_async_job, trigger=CronTrigger(minute='0,15,30,45'))
     scheduler.start()
-    logger.info("Scheduler started with CronTrigger: every 15 mins on the dot")
+    logger.info("Scheduler started: every 15 minutes on the dot")
 
 @app.on_event("startup")
 async def on_startup():
     try:
         start_scheduler()
-        await send_message("🚀 Бот запущен. Первый анализ будет в ближайший 15-минутный интервал.")
+
+        # При старте сразу отправить приветственное сообщение с текущей ценой тикеров
+        tickers = load_tickers()
+        messages = []
+        async with httpx.AsyncClient() as client:
+            for ticker in tickers:
+                resp = await client.get(BASE_URL, params={
+                    'category': 'linear',
+                    'symbol': ticker,
+                    'interval': TIMEFRAME,
+                    'limit': 1
+                })
+                resp.raise_for_status()
+                data = resp.json()
+                close_price = float(data['result']['list'][0]['close']) if data.get('retCode', 1) == 0 else None
+                messages.append(f"🔔 <b>{ticker}</b> стартовая цена: {close_price:.4f}" if close_price else f"❗ {ticker} — цена недоступна")
+        await send_message("🚀 Бот запущен.\n" + "\n".join(messages))
+
         logger.info("Startup complete, bot running.")
     except Exception as e:
         logger.error(f"Error on startup: {e}")
