@@ -1,142 +1,45 @@
-from pybit.unified_trading import HTTP
 import pandas as pd
-import ta
 
-def get_klines(symbol, interval='1', limit=200):
-    res = session.query_kline(symbol=symbol, interval=interval, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API: {res['ret_msg']}")
-    data = res['result']
-    df = pd.DataFrame(data)
-    df['open_time'] = pd.to_datetime(df['open_time'], unit='ms')
-    for col in ['open', 'high', 'low', 'close', 'volume', 'turnover', 'open_interest']:
-        df[col] = df[col].astype(float)
-    return df
+def analyze_signal(df: pd.DataFrame, cvd: float, oi_delta: float, prev_close: float = None, prev_cvd: float = 0.0) -> dict:
+    """
+    Анализ сигнала на основе закрытия цены, ΔOI и CVD.
+    df - DataFrame с барами, обязательно содержит столбец 'close'
+    cvd - текущее значение CVD (накопленная дельта изменения цены закрытия)
+    oi_delta - дельта открытого интереса (текущий OI минус OI 4 периода назад)
+    prev_close - цена закрытия предыдущего периода
+    prev_cvd - значение CVD предыдущего периода
+    """
 
-def get_trades(symbol, start_time, end_time, limit=1000):
-    res = session.query_recent_trading_records(symbol=symbol, limit=limit)
-    if res['ret_code'] != 0:
-        raise Exception(f"Ошибка API trades: {res['ret_msg']}")
-    trades = res['result']
-    trades_df = pd.DataFrame(trades)
-    trades_df['trade_time'] = pd.to_datetime(trades_df['trade_time'], unit='ms')
-    trades_df = trades_df[(trades_df['trade_time'] >= start_time) & (trades_df['trade_time'] <= end_time)]
-    trades_df['price'] = trades_df['price'].astype(float)
-    trades_df['qty'] = trades_df['qty'].astype(float)
-    trades_df['isBuyerMaker'] = trades_df['isBuyerMaker'].astype(bool)
-    return trades_df
+    close = df['close'].iloc[-1]
 
-def calculate_cvd(trades_df):
-    buy_volume = trades_df[trades_df['isBuyerMaker'] == False]['qty'].sum()
-    sell_volume = trades_df[trades_df['isBuyerMaker'] == True]['qty'].sum()
-    return buy_volume - sell_volume
+    if prev_close is None:
+        prev_close = df['close'].iloc[-2]
 
-def calculate_oi_delta(df, window=3):
-    if len(df) < window + 1:
-        return 0
-    return df['open_interest'].iloc[-1] - df['open_interest'].iloc[-window-1]
+    price_change_percent = ((close - prev_close) / prev_close) * 100 if prev_close > 0 else 0.0
 
-def analyze_signal(df: pd.DataFrame, cvd: float = 0, oi_delta: float = 0) -> dict:
-    close = df['close']
-    high = df['high']
-    low = df['low']
+    # Определяем тренды
+    price_up = close > prev_close
+    cvd_up = cvd > prev_cvd
+    oi_up = oi_delta > 0
 
-    rsi = ta.momentum.RSIIndicator(close, window=14).rsi()
-    cci = ta.trend.CCIIndicator(high, low, close, window=20).cci()
-    macd_hist = ta.trend.MACD(close).macd_diff()
-    bb = ta.volatility.BollingerBands(close, window=20, window_dev=2)
+    # Логика сигналов
+    if price_up and oi_up and cvd_up:
+        comment = "💪 Сильный лонг"
+    elif not price_up and oi_up and not cvd_up:
+        comment = "💪 Сильный шорт"
+    else:
+        comment = "—"
 
-    rsi_curr = rsi.iloc[-1]
-    cci_curr = cci.iloc[-1]
-    macd_hist_curr = macd_hist.iloc[-1]
-    macd_trend_up = macd_hist_curr > 0
-    macd_trend_down = macd_hist_curr < 0
-    close_curr = close.iloc[-1]
-    bb_upper = bb.bollinger_hband().iloc[-1]
-    bb_lower = bb.bollinger_lband().iloc[-1]
-
-    cvd_positive = cvd > 0
-    cvd_negative = cvd < 0
-    oi_rising = oi_delta > 0
-    oi_falling = oi_delta < 0
-
-    bb_delta = (bb_upper - bb_lower) * 0.1
-
-    long_entry = (
-        (rsi_curr < 40 or cci_curr < -80) and
-        macd_trend_up and
-        close_curr <= bb_lower + bb_delta and
-        cvd_positive and
-        oi_rising
-    )
-
-    long_exit = (
-        (rsi_curr > 60 or cci_curr > 80) and
-        macd_trend_down and
-        close_curr >= bb_upper - bb_delta
-    )
-
-    short_entry = (
-        (rsi_curr > 60 or cci_curr > 80) and
-        macd_trend_down and
-        close_curr >= bb_upper - bb_delta and
-        cvd_negative and
-        oi_falling
-    )
-
-    short_exit = (
-        (rsi_curr < 40 or cci_curr < -80) and
-        macd_trend_up and
-        close_curr <= bb_lower + bb_delta
-    )
-
-    return {
-        'long_entry': long_entry,
-        'long_exit': long_exit,
-        'short_entry': short_entry,
-        'short_exit': short_exit,
-        'details': {
-            'rsi': rsi_curr,
-            'cci': cci_curr,
-            'macd_hist': macd_hist_curr,
-            'close': close_curr,
-            'bb_upper': bb_upper,
-            'bb_lower': bb_lower,
-            'cvd': cvd,
-            'oi_delta': oi_delta
-        }
+    details = {
+        'close': close,
+        'prev_close': prev_close,
+        'price_change_percent': price_change_percent,
+        'oi_delta': oi_delta,
+        'cvd': cvd,
+        'comment': comment
     }
 
-def main():
-    global session
-    session = HTTP(endpoint="https://api.bybit.com")
-
-    symbol = "ETHUSDT"
-    interval = '1'  # 1 минута
-
-    print(f"Запуск анализа для {symbol} с интервалом {interval} мин")
-
-    df = get_klines(symbol, interval=interval, limit=200)
-
-    end_time = df['open_time'].iloc[-1] + pd.Timedelta(minutes=1)
-    start_time = end_time - pd.Timedelta(minutes=5)
-
-    trades_df = get_trades(symbol, start_time, end_time)
-
-    cvd = calculate_cvd(trades_df)
-    oi_delta = calculate_oi_delta(df, window=3)
-
-    signals = analyze_signal(df, cvd=cvd, oi_delta=oi_delta)
-
-    print("Текущие значения индикаторов:")
-    for k, v in signals['details'].items():
-        print(f"  {k}: {v}")
-
-    print("\nСигналы:")
-    print(f" ▶️ Вход в Лонг: {'✅' if signals['long_entry'] else '❌'}")
-    print(f" ⏹️ Выход из Лонга: {'✅' if signals['long_exit'] else '❌'}")
-    print(f" ▶️ Вход в Шорт: {'✅' if signals['short_entry'] else '❌'}")
-    print(f" ⏹️ Выход из Шорта: {'✅' if signals['short_exit'] else '❌'}")
-
-if __name__ == "__main__":
-    main()
+    return {
+        'signal': comment,
+        'details': details
+    }
