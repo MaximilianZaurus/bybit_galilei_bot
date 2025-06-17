@@ -16,17 +16,22 @@ TIMEFRAMES = {
 
 class BybitClient:
     def __init__(self):
+        # Берём ключи из env
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-        self.category = "linear"
+        self.category = "linear"  # категория фьючерсов (USDT perpetual)
+        # HTTP клиент для запросов к REST API
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
+        # WebSocket клиент
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
+        # Хранилище CVD (Cumulative Volume Delta), загружаем из файла
         self.CVD = defaultdict(float, self.load_cvd_data())
+        # История Open Interest (OI) по каждому символу
         self.OI_HISTORY = defaultdict(list)
 
-    # --- CVD JSON persistence ---
+    # --- Работа с CVD в файле ---
 
     def load_cvd_data(self) -> dict:
         if os.path.exists(CVD_FILE):
@@ -34,6 +39,7 @@ class BybitClient:
                 with open(CVD_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     logger.info(f"Загружены CVD из файла: {data}")
+                    # Конвертируем все значения в float
                     return {symbol: float(value) for symbol, value in data.items()}
             except Exception as e:
                 logger.error(f"Ошибка при загрузке CVD: {e}")
@@ -54,12 +60,14 @@ class BybitClient:
         self.CVD[symbol] = value
         self.save_cvd_data()
 
-    # --- WebSocket methods ---
+    # --- WebSocket методы ---
 
     async def start_ws(self):
+        # В pybit V5 WebSocket запускается автоматически, поэтому здесь пусто
         logger.info("WebSocket автоматически запускается внутри Pybit V5 — явный run() не требуется.")
 
     def subscribe_to_trades(self, tickers):
+        # Проверяем, что tickers — список строк
         if not isinstance(tickers, list):
             logger.error(f"subscribe_to_trades ожидал список, получил {type(tickers)}")
             raise TypeError("tickers must be a list")
@@ -69,14 +77,16 @@ class BybitClient:
 
         logger.info(f"Подписка на тикеры: {tickers}")
 
+        # Формируем список тем для подписки (например, trade.BTCUSDT)
         topics = [f"trade.{ticker}" for ticker in tickers]
         self.ws.subscribe(topics, callback=self.handle_message)
 
         logger.info("Подписки отправлены")
 
-    # --- Open Interest ---
+    # --- Работа с Open Interest ---
 
     async def fetch_open_interest(self, symbol: str) -> float:
+        # REST-запрос в отдельном потоке, т.к. pybit HTTP — синхронный
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
@@ -90,16 +100,19 @@ class BybitClient:
         oi = await self.fetch_open_interest(symbol)
         history = self.OI_HISTORY[symbol]
         history.append(oi)
+        # Храним максимум 3 значения для дельты
         if len(history) > 3:
             history.pop(0)
 
     def get_oi_delta(self, symbol: str) -> float:
         history = self.OI_HISTORY[symbol]
+        # Если данных мало, возвращаем 0
         if len(history) < 3:
             return 0.0
+        # Дельта между последним и первым значением в истории
         return history[-1] - history[0]
 
-    # --- Message handler ---
+    # --- Обработка входящих WS сообщений ---
 
     def handle_message(self, msg):
         topic = msg.get("topic", "")
@@ -109,12 +122,13 @@ class BybitClient:
             for trade in data:
                 qty = float(trade['qty'])
                 side = trade['side']
+                # Калькуляция CVD — при покупке плюсуем объём, при продаже минусуем
                 if side == "Buy":
                     self.CVD[symbol] += qty
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
-    # --- Цена последней сделки ---
+    # --- Получение последней цены по символу ---
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
