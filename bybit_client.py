@@ -77,9 +77,10 @@ class BybitClient:
 
         logger.info(f"Подписка на тикеры: {tickers}")
 
-        # Формируем список тем для подписки (например, trade.BTCUSDT)
-        topics = [f"trade.{ticker}" for ticker in tickers]
-        self.ws.subscribe(topics, callback=self.handle_message)
+        # Подписываемся по одному топику за раз
+        for ticker in tickers:
+            topic = f"trade.{ticker}"
+            self.ws.subscribe(topic, callback=self.handle_message)
 
         logger.info("Подписки отправлены")
 
