@@ -64,9 +64,9 @@ class BybitClient:
             raise TypeError("tickers must be a list")
         logger.info(f"Подписка на тикеры: {tickers}")
 
-        for ticker in tickers:
-            topic_str = f"trade.{ticker}"
-            self.ws.subscribe(topic=topic_str, callback=self.handle_message)
+        topics = [f"trade.{ticker}" for ticker in tickers]
+        self.ws.subscribe(topics)
+        self.ws.on("trade", callback=self.handle_message)
 
         logger.info("Подписки отправлены")
 
