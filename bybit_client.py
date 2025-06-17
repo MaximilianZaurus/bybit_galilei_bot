@@ -89,8 +89,7 @@ class BybitClient:
 
     def subscribe_to_trades(self, symbols: list):
         topics = [f"trade.{sym}" for sym in symbols]
-        self.ws.subscribe(topics)
-        self.ws.on("trade", self.handle_message)
+        self.ws.subscribe(topics, self.handle_message)
 
     async def start_ws(self):
         await self.ws.connect()
