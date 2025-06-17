@@ -1,7 +1,8 @@
 import asyncio
 import json
 import logging
-from signal_analysis import BybitClient
+from signals import analyze_signal
+from bybit_client import BybitClient  # ваш класс клиента
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -24,13 +25,13 @@ class Scheduler:
 
     async def fetch_and_analyze(self, ticker: str, timeframe: str):
         try:
-            signal_result = await self.client.analyze_symbol(ticker, timeframe)
-            # Формируем сообщение с краткой информацией
-            details = signal_result.get("details", {})
+            result = await self.client.analyze_symbol(ticker, timeframe)
+            details = result.get("details", {})
             comment = details.get("comment", "—")
-            price_change = details.get("price_change_percent", 0)
-            oi_delta = details.get("oi_delta", 0)
-            cvd = details.get("cvd", 0)
+            price_change = details.get("price_change_percent", 0.0)
+            oi_delta = details.get("oi_delta", 0.0)
+            cvd = details.get("cvd", 0.0)
+
             msg = (
                 f"{ticker} [{timeframe}]: {comment}\n"
                 f"Цена: {details.get('close', 0):.4f} ({price_change:+.2f}%)\n"
@@ -39,26 +40,22 @@ class Scheduler:
             logger.info(msg)
             return msg
         except Exception as e:
-            logger.error(f"Ошибка анализа {ticker} {timeframe}: {e}")
+            logger.error(f"Ошибка анализа {ticker} [{timeframe}]: {e}")
             return None
 
     async def run(self):
-        # Запускаем WS и подписываемся
+        # Запускаем WS
         await self.client.start_ws()
+        # Подписываемся на трейды
         self.client.subscribe_to_trades(self.tickers)
 
-        # Основной цикл
         while True:
             for ticker in self.tickers:
-                # Анализ 15m
-                msg_15m = await self.fetch_and_analyze(ticker, "15m")
-                # Анализ 1h
-                msg_1h = await self.fetch_and_analyze(ticker, "1h")
-
-                # Можно отправлять msg_15m и msg_1h в Telegram (вызовы API Telegram)
+                await self.fetch_and_analyze(ticker, "15m")
+                await self.fetch_and_analyze(ticker, "1h")
 
             await asyncio.sleep(900)  # 15 минут
 
-if __name__ == "__main__":
-    sched = Scheduler()
-    asyncio.run(sched.run())
+async def start_scheduler():
+    scheduler = Scheduler()
+    await scheduler.run()
