@@ -18,6 +18,9 @@ class BybitClient:
         self.CVD = defaultdict(float)         # cumulative volume delta (накопленный дельта-объём)
         self.OI_HISTORY = defaultdict(list)   # история open interest
 
+        # Регистрируем callback на получение сообщений
+        self.ws.on_message = self.handle_message
+
     async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
@@ -56,7 +59,7 @@ class BybitClient:
 
     def subscribe_to_trades(self, symbols: list):
         topics = [f"trade.{sym}" for sym in symbols]
-        self.ws.subscribe(topics, self.handle_message)  # Обязательно передаем callback
+        self.ws.subscribe(topics)  # Передаём только список тем, callback не передаём!
 
     async def start_ws(self):
         await self.ws.connect()
