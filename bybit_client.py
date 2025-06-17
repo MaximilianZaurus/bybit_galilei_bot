@@ -36,7 +36,6 @@ class BybitClient:
         return history[-1] - history[0]
 
     def handle_message(self, msg):
-        # msg — dict с данными от WS
         for topic, data in msg.items():
             if topic.startswith("trade."):
                 symbol = topic.split(".")[1]
@@ -57,8 +56,9 @@ class BybitClient:
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, self.http.get_tickers, symbol)
-        if resp and 'result' in resp and len(resp['result']) > 0:
-            return float(resp['result'][0]['lastPrice'])
-        else:
-            raise ValueError(f"Не удалось получить цену для {symbol}")
+        resp = await loop.run_in_executor(None, self.http.get_tickers)
+        if resp and 'result' in resp:
+            for ticker in resp['result']:
+                if ticker['symbol'] == symbol:
+                    return float(ticker['lastPrice'])
+        raise ValueError(f"Не удалось получить цену для {symbol}")
