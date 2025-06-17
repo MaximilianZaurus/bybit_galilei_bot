@@ -1,5 +1,4 @@
 import os
-import threading
 from collections import defaultdict
 import asyncio
 import logging
@@ -20,7 +19,6 @@ class BybitClient:
         self.OI_HISTORY = defaultdict(list)   # история open interest
 
         self.ws.callback = self.handle_message
-        self.ws_thread = None
 
     async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
@@ -62,11 +60,16 @@ class BybitClient:
         topics = [f"trade.{sym}" for sym in symbols]
         self.ws.subscribe(topics)
 
-    def start_ws(self):
-        if self.ws_thread and self.ws_thread.is_alive():
-            return
-        self.ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
-        self.ws_thread.start()
+    async def start_ws(self):
+        # Подпишись на необходимые топики до подключения, если нужно
+        # Например:
+        # self.subscribe_to_trades(['BTCUSDT', 'ETHUSDT'])
+
+        await self.ws.connect()
+        # Запускаем бесконечный цикл обработки сообщений WebSocket
+        # pybit v5 предлагает либо run(), либо слушать события через callback
+        # Ниже базовый пример ожидания сообщений, если есть такая функция:
+        await self.ws.run()  # если в pybit v5 есть метод run()
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
