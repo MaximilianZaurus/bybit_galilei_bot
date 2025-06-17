@@ -25,6 +25,7 @@ class BybitClient:
 
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
+        self._connected = False
 
     # --- CVD JSON persistence ---
 
@@ -54,7 +55,34 @@ class BybitClient:
         self.CVD[symbol] = value
         self.save_cvd_data()
 
-    # --- Основной функционал ---
+    # --- WebSocket methods ---
+
+    async def start_ws(self):
+        if not self._connected:
+            await self.ws.connect()
+            self._connected = True
+            logger.info("WebSocket connected")
+
+    def subscribe_to_trades(self, tickers: list):
+        if not self._connected:
+            raise RuntimeError("WebSocket not connected. Call await start_ws() before subscribing.")
+        if not isinstance(tickers, list):
+            raise TypeError("tickers must be a list")
+        logger.info(f"Подписка на тикеры: {tickers}")
+
+        for ticker in tickers:
+            topic_str = f"trade.{ticker}"
+            self.ws.subscribe(topic=topic_str, callback=self.handle_message)
+        logger.info("Подписки отправлены")
+
+    async def run_ws(self):
+        try:
+            await self.ws.run()
+        except Exception as e:
+            logger.error(f"WebSocket run error: {e}")
+            self._connected = False
+
+    # --- Open Interest ---
 
     async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
@@ -79,6 +107,8 @@ class BybitClient:
             return 0.0
         return history[-1] - history[0]
 
+    # --- Message handler ---
+
     def handle_message(self, msg):
         topic = msg.get("topic", "")
         data = msg.get("data", [])
@@ -92,55 +122,3 @@ class BybitClient:
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
-    def subscribe_to_trades(self, tickers: list):
-        if not isinstance(tickers, list):
-            raise TypeError("tickers must be a list")
-        logger.info(f"Подписка на тикеры: {tickers}")
-        for ticker in tickers:
-            self.ws.subscribe(
-                topic="trade",
-                symbol=ticker,
-                callback=self.handle_message
-            )
-
-    async def start_ws(self):
-        await self.ws.connect()
-        await self.ws.run()
-
-    async def get_current_price(self, symbol: str) -> float:
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
-        logger.debug(f"Ответ get_tickers: {resp}")
-
-        if not resp or not isinstance(resp, dict):
-            raise ValueError(f"Пустой или неверный ответ от API get_tickers: {resp}")
-
-        result = resp.get('result')
-        if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
-            raise ValueError(f"Неверный формат результата get_tickers: {resp}")
-
-        for ticker in result['list']:
-            sym = ticker.get('symbol', '').upper()
-            last_price = ticker.get('lastPrice') or ticker.get('last_price')
-            if sym == symbol.upper() and last_price is not None:
-                return float(last_price)
-
-        raise ValueError(f"Не удалось найти цену для {symbol}")
-
-    async def get_klines(self, symbol: str, interval: str, limit: int = 200):
-        allowed_intervals = {"1", "3", "5", "15", "30", "60", "120", "240", "360", "720", "D", "W", "M"}
-        if interval not in allowed_intervals:
-            raise ValueError(f"Неверный interval для get_kline: {interval}")
-
-        loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: self.http.get_kline(
-            symbol=symbol,
-            interval=interval,
-            limit=limit,
-            category=self.category
-        ))
-
-        if resp and isinstance(resp, dict) and 'result' in resp and 'list' in resp['result']:
-            return resp['result']['list']
-        else:
-            raise ValueError(f"Ошибка получения свечей для {symbol}: {resp}")
