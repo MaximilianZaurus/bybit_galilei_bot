@@ -64,3 +64,15 @@ class BybitClient:
                 if ticker['symbol'] == symbol:
                     return float(ticker['lastPrice'])
         raise ValueError(f"Не удалось получить цену для {symbol}")
+
+    def get_klines(self, symbol: str, interval: str, limit: int = 200):
+        resp = self.http.get_candlestick(
+            symbol=symbol,
+            interval=interval,
+            limit=limit,
+            category=self.category
+        )
+        if 'result' in resp and 'list' in resp['result']:
+            return resp['result']['list']
+        else:
+            raise ValueError(f"Ошибка получения свечей для {symbol}: {resp}")
