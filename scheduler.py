@@ -40,13 +40,23 @@ class Scheduler:
         logger.info(f"Подписка на тикеры: {self.tickers} (type={type(self.tickers)})")
         if not isinstance(self.tickers, list):
             raise TypeError(f"Ожидался список тикеров, а получено {type(self.tickers)}")
+        await self.client.start_ws()
         self.client.subscribe_to_trades(self.tickers)
 
     async def fetch_and_analyze(self, timeframe: str):
         messages = []
         for ticker in self.tickers:
             try:
-                klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
+                klines = await self.client.http.get_kline(
+                    category=self.client.category,
+                    symbol=ticker,
+                    interval=TIMEFRAMES[timeframe],
+                    limit=50
+                )
+                klines = klines.get('result', {}).get('list', [])
+                if not klines:
+                    raise ValueError("Пустой список свечей")
+
                 await self.client.update_oi_history(ticker)
                 oi_delta = self.client.get_oi_delta(ticker)
                 cvd_value = self.client.CVD.get(ticker, 0.0)
@@ -101,7 +111,6 @@ class Scheduler:
         loop = asyncio.get_event_loop()
         loop.create_task(self.safe_start_ws_and_subscribe())
 
-        # Добавляем задачи с лямбдами для правильного отложенного запуска
         self.scheduler.add_job(
             lambda: asyncio.create_task(self.safe_fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
