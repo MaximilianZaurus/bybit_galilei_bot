@@ -86,13 +86,16 @@ class BybitClient:
                     self.CVD[symbol] += qty
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
-
+   
     def subscribe_to_trades(self, tickers: list):
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
-        topics = [f"trade.{ticker}" for ticker in tickers]
-        logger.info(f"Подписка на топики: {topics}")
-        self.ws.subscribe(topics, self.handle_message)  # <-- ключевое исправление: убрали return
+        logger.info(f"Подписка на тикеры: {tickers}")
+        self.ws.subscribe(
+            topic="trade",
+            symbols=tickers,
+            callback=self.handle_message
+        )
 
     async def start_ws(self):
         await self.ws.connect()
