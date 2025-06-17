@@ -59,8 +59,9 @@ class BybitClient:
 
         logger.info(f"Subscribing to trades: {tickers}")
         topics = [f"trade.{ticker}" for ticker in tickers]
-        self.ws.subscribe(topics, callback=self.handle_message)
-        logger.info("Subscriptions sent")
+        self.ws.subscribe(topics)  # только список тем без callback
+        self.ws.on('update', self.handle_message)  # регистрация обработчика сообщений
+        logger.info("Subscriptions and event handler set")
 
     def handle_message(self, msg):
         topic = msg.get("topic", "")
