@@ -1,8 +1,3 @@
-from pybit.unified_trading import HTTP, WebSocket
-import os
-from collections import defaultdict
-import threading
-
 class BybitClient:
     def __init__(self):
         API_KEY = os.getenv("BYBIT_API_KEY")
@@ -53,3 +48,11 @@ class BybitClient:
             return
         self.ws_thread = threading.Thread(target=self.ws.run_forever, daemon=True)
         self.ws_thread.start()
+
+    async def get_current_price(self, symbol: str) -> float:
+        # pybit HTTP метод get_tickers возвращает список с тикерами и ценами
+        resp = self.http.get_tickers(symbol=symbol)
+        if resp and 'result' in resp and len(resp['result']) > 0:
+            return float(resp['result'][0]['lastPrice'])
+        else:
+            raise ValueError(f"Не удалось получить цену для {symbol}")
