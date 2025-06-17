@@ -25,8 +25,6 @@ class BybitClient:
 
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
-        self._connected = False
-        self._ws_task = None  # WebSocket task
 
     # --- CVD JSON persistence ---
 
@@ -58,15 +56,7 @@ class BybitClient:
 
     # --- WebSocket methods ---
 
-    async def start_ws(self):
-        if not self._connected:
-            self._ws_task = asyncio.create_task(self.ws.run())
-            self._connected = True
-            logger.info("WebSocket started (ws.run() task created)")
-
     def subscribe_to_trades(self, tickers: list):
-        if not self._connected:
-            raise RuntimeError("WebSocket not connected. Call await start_ws() before subscribing.")
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
         logger.info(f"Подписка на тикеры: {tickers}")
@@ -75,10 +65,6 @@ class BybitClient:
             topic_str = f"trade.{ticker}"
             self.ws.subscribe(topic=topic_str, callback=self.handle_message)
         logger.info("Подписки отправлены")
-
-    async def run_ws(self):
-        if self._ws_task:
-            await self._ws_task
 
     # --- Open Interest ---
 
