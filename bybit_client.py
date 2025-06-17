@@ -15,11 +15,8 @@ class BybitClient:
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
-        self.CVD = defaultdict(float)         # cumulative volume delta (накопленный дельта-объём)
-        self.OI_HISTORY = defaultdict(list)   # история open interest
-
-        # Регистрируем callback на получение сообщений
-        self.ws.on_message = self.handle_message
+        self.CVD = defaultdict(float)
+        self.OI_HISTORY = defaultdict(list)
 
     async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
@@ -51,7 +48,7 @@ class BybitClient:
             symbol = topic.split(".")[1]
             for trade in data:
                 qty = float(trade['qty'])
-                side = trade['side']  # "Buy" или "Sell"
+                side = trade['side']
                 if side == "Buy":
                     self.CVD[symbol] += qty
                 elif side == "Sell":
@@ -59,7 +56,7 @@ class BybitClient:
 
     def subscribe_to_trades(self, symbols: list):
         topics = [f"trade.{sym}" for sym in symbols]
-        self.ws.subscribe(topics)  # Передаём только список тем, callback не передаём!
+        self.ws.subscribe(topics, self.handle_message)
 
     async def start_ws(self):
         await self.ws.connect()
