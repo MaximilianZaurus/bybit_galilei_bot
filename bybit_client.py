@@ -70,10 +70,11 @@ class BybitClient:
         if not resp or not isinstance(resp, dict):
             raise ValueError(f"Пустой или неверный ответ от API get_tickers: {resp}")
 
-        if 'result' not in resp or not isinstance(resp['result'], list):
-            raise ValueError(f"В ответе отсутствует поле 'result' или оно не список: {resp}")
+        result = resp.get('result')
+        if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
+            raise ValueError(f"В ответе отсутствует поле 'result.list' или оно не список: {resp}")
 
-        for ticker in resp['result']:
+        for ticker in result['list']:
             if not isinstance(ticker, dict):
                 continue
             sym = ticker.get('symbol', '').upper()
