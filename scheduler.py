@@ -110,10 +110,8 @@ class Scheduler:
     def start(self):
         loop = asyncio.get_event_loop()
 
-        # Создаём задачу подключения WS и подписки
         loop.create_task(self.safe_start_ws_and_subscribe())
 
-        # Добавляем задачи планировщика
         self.scheduler.add_job(
             lambda: asyncio.create_task(self.safe_fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
@@ -131,9 +129,7 @@ class Scheduler:
         self.scheduler.start()
         logger.info("Scheduler started: 15m every 15 mins, 1h every hour")
 
-async def main():
+# Убрали asyncio.run() — теперь только создание объекта и запуск синхронно
+def start_scheduler():
     scheduler = Scheduler()
     scheduler.start()
-
-def start_scheduler():
-    asyncio.run(main())
