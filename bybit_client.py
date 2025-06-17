@@ -90,10 +90,10 @@ class BybitClient:
     def subscribe_to_trades(self, tickers: list):
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
-        topics = [f"trade.{ticker}" for ticker in tickers]
-        logger.info(f"Подписка на топики: {topics}")
+        logger.info(f"Подписка на тикеры: {tickers}")
         self.ws.subscribe(
-            topics=topics,
+            topic="trade",
+            symbol=tickers,
             callback=self.handle_message
         )
 
