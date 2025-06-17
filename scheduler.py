@@ -1,12 +1,13 @@
 import asyncio
 import json
 import logging
+import pandas as pd
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from bybit_client import BybitClient
 from bot import send_message
-from signals import analyze_signal
+from signal_analysis import analyze_signal  # Импорт из нового файла
 
 logger = logging.getLogger(__name__)
 
@@ -47,45 +48,39 @@ class Scheduler:
         messages = []
         for ticker in self.tickers:
             try:
-                klines = await self.client.http.get_kline(
+                klines_resp = await self.client.http.get_kline(
                     category=self.client.category,
                     symbol=ticker,
                     interval=TIMEFRAMES[timeframe],
                     limit=50
                 )
-                klines = klines.get('result', {}).get('list', [])
-                if not klines:
-                    raise ValueError("Пустой список свечей")
+                klines_list = klines_resp.get('result', {}).get('list', [])
+                if not klines_list or len(klines_list) < 2:
+                    raise ValueError("Пустой или слишком короткий список свечей")
+
+                # Преобразуем в DataFrame
+                df = pd.DataFrame(klines_list)
+                df['close'] = df['close'].astype(float)
 
                 await self.client.update_oi_history(ticker)
                 oi_delta = self.client.get_oi_delta(ticker)
                 cvd_value = self.client.CVD.get(ticker, 0.0)
                 prev_cvd = self.client.get_prev_cvd(ticker)
 
-                signals = analyze_signal(klines, cvd=cvd_value, oi_delta=oi_delta)
+                # Анализируем сигнал с текущими данными
+                signals = analyze_signal(df, cvd=cvd_value, oi_delta=oi_delta, prev_cvd=prev_cvd)
                 d = signals['details']
-
-                price_change_percent = ((d['close'] - d['prev_close']) / d['prev_close']) * 100 if d['prev_close'] > 0 else 0
-                price_up = d['close'] > d['prev_close']
-                cvd_up = cvd_value > prev_cvd
-                oi_up = oi_delta > 0
-
-                if price_up and oi_up and cvd_up:
-                    comment = "💪 Сильный лонг"
-                elif not price_up and oi_up and not cvd_up:
-                    comment = "💪 Сильный шорт"
-                else:
-                    comment = "—"
 
                 msg = (
                     f"⏱ <b>{ticker} [{timeframe}]</b>\n"
-                    f"Цена закрытия: {d['close']:.4f} ({price_change_percent:+.2f}%)\n"
-                    f"ΔOI: {oi_delta:+.2f}\n"
-                    f"CVD: {cvd_value:+.2f}\n"
-                    f"{comment}"
+                    f"Цена закрытия: {d['close']:.4f} ({d['price_change_percent']:+.2f}%)\n"
+                    f"ΔOI: {d['oi_delta']:+.2f}\n"
+                    f"CVD: {d['cvd']:+.2f}\n"
+                    f"{d['comment']}"
                 )
                 messages.append(msg)
 
+                # Обновляем сохранённое значение CVD
                 self.client.update_prev_cvd(ticker, cvd_value)
 
             except Exception as e:
@@ -129,7 +124,6 @@ class Scheduler:
         self.scheduler.start()
         logger.info("Scheduler started: 15m every 15 mins, 1h every hour")
 
-# Убрали asyncio.run() — теперь только создание объекта и запуск синхронно
 def start_scheduler():
     scheduler = Scheduler()
     scheduler.start()
