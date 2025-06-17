@@ -91,11 +91,11 @@ class BybitClient:
         if not isinstance(tickers, list):
             raise TypeError("tickers must be a list")
         logger.info(f"Подписка на тикеры: {tickers}")
-        self.ws.subscribe(
-            topic="trade",
-            symbol=tickers,
-            callback=self.handle_message
-        )
+        for symbol in tickers:
+            self.ws.subscribe(
+                topic=f"trade.{symbol}",
+                callback=self.handle_message
+            )
 
     async def start_ws(self):
         await self.ws.connect()
