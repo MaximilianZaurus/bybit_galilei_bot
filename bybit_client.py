@@ -22,7 +22,10 @@ class BybitClient:
 
     def fetch_open_interest(self, symbol: str) -> float:
         resp = self.http.get_open_interest(symbol=symbol, category=self.category)
-        return float(resp['result']['open_interest'])
+        # Проверка на наличие результата и open_interest
+        if resp.get('result') and 'open_interest' in resp['result']:
+            return float(resp['result']['open_interest'])
+        raise ValueError(f"Ошибка получения open interest для {symbol}: {resp}")
 
     def update_oi_history(self, symbol: str):
         oi = self.fetch_open_interest(symbol)
@@ -38,6 +41,7 @@ class BybitClient:
         return history[-1] - history[0]
 
     def handle_message(self, msg):
+        # msg — словарь вида {topic: data}
         for topic, data in msg.items():
             if topic.startswith("trade."):
                 symbol = topic.split(".")[1]
@@ -59,9 +63,9 @@ class BybitClient:
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
-        if resp and 'result' in resp:
+        if resp and isinstance(resp, dict) and 'result' in resp and isinstance(resp['result'], list):
             for ticker in resp['result']:
-                if ticker['symbol'] == symbol:
+                if isinstance(ticker, dict) and ticker.get('symbol') == symbol:
                     return float(ticker['lastPrice'])
         raise ValueError(f"Не удалось получить цену для {symbol}")
 
@@ -72,7 +76,7 @@ class BybitClient:
             limit=limit,
             category=self.category
         )
-        if 'result' in resp and 'list' in resp['result']:
+        if resp and isinstance(resp, dict) and 'result' in resp and 'list' in resp['result']:
             return resp['result']['list']
         else:
             raise ValueError(f"Ошибка получения свечей для {symbol}: {resp}")
