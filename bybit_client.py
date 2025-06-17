@@ -59,9 +59,14 @@ class BybitClient:
     async def start_ws(self):
         logger.info("WebSocket автоматически запускается внутри Pybit V5 — явный run() не требуется.")
 
-    def subscribe_to_trades(self, tickers: list):
+    def subscribe_to_trades(self, tickers):
         if not isinstance(tickers, list):
+            logger.error(f"subscribe_to_trades ожидал список, получил {type(tickers)}")
             raise TypeError("tickers must be a list")
+        if any(not isinstance(t, str) for t in tickers):
+            logger.error("Все элементы tickers должны быть строками")
+            raise TypeError("Все элементы tickers должны быть строками")
+
         logger.info(f"Подписка на тикеры: {tickers}")
 
         topics = [f"trade.{ticker}" for ticker in tickers]
