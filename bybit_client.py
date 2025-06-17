@@ -60,7 +60,6 @@ class BybitClient:
 
     async def start_ws(self):
         await self.ws.connect()
-        # В pybit v5 нет run_forever, а есть run() — слушаем сообщения
         await self.ws.run()
 
     async def get_current_price(self, symbol: str) -> float:
