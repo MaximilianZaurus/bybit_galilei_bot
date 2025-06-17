@@ -1,5 +1,5 @@
 import os
-import asyncio  # Импорт asyncio для асинхронных функций
+import asyncio
 import json
 import logging
 from collections import defaultdict
@@ -17,7 +17,6 @@ class BybitClient:
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
-        # Загружаем CVD из файла или пустой dict
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
 
@@ -27,7 +26,6 @@ class BybitClient:
                 with open(CVD_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
                     logger.info(f"Loaded CVD from file: {data}")
-                    # Приводим значения к float
                     return {symbol: float(value) for symbol, value in data.items()}
             except Exception as e:
                 logger.error(f"Error loading CVD: {e}")
@@ -52,7 +50,6 @@ class BybitClient:
         logger.info("WebSocket in pybit v5 starts automatically.")
 
     def subscribe_to_trades(self, tickers):
-        # Строгая проверка, чтобы избежать передачи булевых или других типов
         if not isinstance(tickers, list):
             logger.error(f"Expected list of tickers, got {type(tickers)}")
             raise TypeError("tickers must be a list")
@@ -61,9 +58,8 @@ class BybitClient:
             raise TypeError("All tickers must be strings")
 
         logger.info(f"Subscribing to trades: {tickers}")
-        topics = [f"trade.{ticker}" for ticker in tickers]
-        # В pybit v5 первым аргументом должен быть callback, вторым список тем
-        self.ws.subscribe(self.handle_message, topics)
+        for ticker in tickers:
+            self.ws.subscribe(self.handle_message, "trade", ticker)
         logger.info("Subscriptions sent")
 
     def handle_message(self, msg):
@@ -81,7 +77,6 @@ class BybitClient:
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
-        # Получаем тикеры через sync метод в отдельном потоке
         resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
         logger.debug(f"get_tickers response: {resp}")
 
@@ -89,16 +84,11 @@ class BybitClient:
             raise ValueError(f"Empty or invalid response from get_tickers: {resp}")
 
         result = resp.get('result')
-        if not result or not isinstance(result, dict):
+        if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
             raise ValueError(f"Invalid get_tickers result format: {resp}")
 
-        tickers_list = result.get('list')
-        if not isinstance(tickers_list, list):
-            raise ValueError(f"Invalid tickers list in get_tickers result: {resp}")
-
-        for ticker in tickers_list:
+        for ticker in result['list']:
             sym = ticker.get('symbol', '').upper()
-            # Берём lastPrice или last_price на всякий случай
             last_price = ticker.get('lastPrice') or ticker.get('last_price')
             if sym == symbol.upper() and last_price is not None:
                 return float(last_price)
