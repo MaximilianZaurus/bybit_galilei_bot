@@ -30,10 +30,10 @@ class Scheduler:
         for ticker in self.tickers:
             try:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
-                oi_history = await self.client.get_open_interest_history(ticker, TIMEFRAMES[timeframe])
-                oi_delta = self.calculate_oi_delta(oi_history)
-                oi_value = float(oi_history[-1]['openInterest']) if oi_history else 0.0
-                cvd_value = self.calculate_cvd(klines)
+                # обновим историю OI асинхронно
+                await self.client.update_oi_history(ticker)
+                oi_delta = self.client.get_oi_delta(ticker)
+                cvd_value = self.client.CVD[ticker]
 
                 signals = analyze_signal(klines, cvd=cvd_value, oi_delta=oi_delta)
                 d = signals['details']
@@ -66,23 +66,6 @@ class Scheduler:
 
         final_message = "\n\n".join(messages)
         await send_message(final_message)
-
-    @staticmethod
-    def calculate_oi_delta(oi_list):
-        if len(oi_list) < 4:
-            return 0.0
-        try:
-            current = float(oi_list[-1]['openInterest'])
-            past = float(oi_list[-4]['openInterest'])
-            return current - past
-        except Exception:
-            return 0.0
-
-    @staticmethod
-    def calculate_cvd(klines):
-        closes = [float(k['close']) for k in klines]
-        diffs = [closes[i] - closes[i - 1] for i in range(1, len(closes))]
-        return sum(diffs)
 
     def start(self):
         loop = asyncio.get_event_loop()
