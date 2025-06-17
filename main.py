@@ -4,6 +4,7 @@ import traceback
 import logging
 from datetime import datetime
 import json
+import asyncio
 
 from fastapi import FastAPI, Request
 from dotenv import load_dotenv
@@ -57,7 +58,8 @@ async def on_startup():
         await send_message(welcome_msg)
         logger.info("Startup message sent")
 
-        start_scheduler()
+        # Запускаем шедулер в фоне, чтобы не блокировать стартап
+        asyncio.create_task(start_scheduler())
         logger.info("Scheduler started")
     except Exception as e:
         logger.error(f"Error on startup: {e}")
