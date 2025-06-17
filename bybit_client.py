@@ -9,49 +9,36 @@ logger = logging.getLogger(__name__)
 
 CVD_FILE = "cvd_data.json"
 
-TIMEFRAMES = {
-    "15m": "15",
-    "1h": "60"
-}
-
 class BybitClient:
     def __init__(self):
-        # Берём ключи из env
         API_KEY = os.getenv("BYBIT_API_KEY")
         API_SECRET = os.getenv("BYBIT_API_SECRET")
 
-        self.category = "linear"  # категория фьючерсов (USDT perpetual)
-        # HTTP клиент для запросов к REST API
+        self.category = "linear"
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
-        # WebSocket клиент
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
-        # Хранилище CVD (Cumulative Volume Delta), загружаем из файла
         self.CVD = defaultdict(float, self.load_cvd_data())
-        # История Open Interest (OI) по каждому символу
         self.OI_HISTORY = defaultdict(list)
-
-    # --- Работа с CVD в файле ---
 
     def load_cvd_data(self) -> dict:
         if os.path.exists(CVD_FILE):
             try:
                 with open(CVD_FILE, "r", encoding="utf-8") as f:
                     data = json.load(f)
-                    logger.info(f"Загружены CVD из файла: {data}")
-                    # Конвертируем все значения в float
+                    logger.info(f"Loaded CVD from file: {data}")
                     return {symbol: float(value) for symbol, value in data.items()}
             except Exception as e:
-                logger.error(f"Ошибка при загрузке CVD: {e}")
+                logger.error(f"Error loading CVD: {e}")
         return {}
 
     def save_cvd_data(self):
         try:
             with open(CVD_FILE, "w", encoding="utf-8") as f:
                 json.dump(self.CVD, f, ensure_ascii=False, indent=2)
-                logger.debug(f"CVD сохранены в файл: {self.CVD}")
+                logger.debug(f"CVD saved to file: {self.CVD}")
         except Exception as e:
-            logger.error(f"Ошибка при сохранении CVD: {e}")
+            logger.error(f"Error saving CVD: {e}")
 
     def get_prev_cvd(self, symbol: str) -> float:
         return self.CVD.get(symbol, 0.0)
@@ -60,34 +47,26 @@ class BybitClient:
         self.CVD[symbol] = value
         self.save_cvd_data()
 
-    # --- WebSocket методы ---
-
     async def start_ws(self):
-        # В pybit V5 WebSocket запускается автоматически, поэтому здесь пусто
-        logger.info("WebSocket автоматически запускается внутри Pybit V5 — явный run() не требуется.")
+        logger.info("WebSocket in pybit v5 starts automatically.")
 
     def subscribe_to_trades(self, tickers):
-        # Проверяем, что tickers — список строк
         if not isinstance(tickers, list):
-            logger.error(f"subscribe_to_trades ожидал список, получил {type(tickers)}")
+            logger.error(f"Expected list of tickers, got {type(tickers)}")
             raise TypeError("tickers must be a list")
         if any(not isinstance(t, str) for t in tickers):
-            logger.error("Все элементы tickers должны быть строками")
-            raise TypeError("Все элементы tickers должны быть строками")
+            logger.error("All tickers must be strings")
+            raise TypeError("All tickers must be strings")
 
-        logger.info(f"Подписка на тикеры: {tickers}")
+        logger.info(f"Subscribing to trades: {tickers}")
 
-        # Подписываемся по одному топику за раз
         for ticker in tickers:
             topic = f"trade.{ticker}"
             self.ws.subscribe(topic, callback=self.handle_message)
 
-        logger.info("Подписки отправлены")
-
-    # --- Работа с Open Interest ---
+        logger.info("Subscriptions sent")
 
     async def fetch_open_interest(self, symbol: str) -> float:
-        # REST-запрос в отдельном потоке, т.к. pybit HTTP — синхронный
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(
             None,
@@ -95,25 +74,20 @@ class BybitClient:
         )
         if resp.get('result') and 'openInterest' in resp['result']:
             return float(resp['result']['openInterest'])
-        raise ValueError(f"Ошибка получения open interest для {symbol}: {resp}")
+        raise ValueError(f"Error fetching open interest for {symbol}: {resp}")
 
     async def update_oi_history(self, symbol: str):
         oi = await self.fetch_open_interest(symbol)
         history = self.OI_HISTORY[symbol]
         history.append(oi)
-        # Храним максимум 3 значения для дельты
         if len(history) > 3:
             history.pop(0)
 
     def get_oi_delta(self, symbol: str) -> float:
         history = self.OI_HISTORY[symbol]
-        # Если данных мало, возвращаем 0
         if len(history) < 3:
             return 0.0
-        # Дельта между последним и первым значением в истории
         return history[-1] - history[0]
-
-    # --- Обработка входящих WS сообщений ---
 
     def handle_message(self, msg):
         topic = msg.get("topic", "")
@@ -123,25 +97,22 @@ class BybitClient:
             for trade in data:
                 qty = float(trade['qty'])
                 side = trade['side']
-                # Калькуляция CVD — при покупке плюсуем объём, при продаже минусуем
                 if side == "Buy":
                     self.CVD[symbol] += qty
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
-    # --- Получение последней цены по символу ---
-
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
         resp = await loop.run_in_executor(None, lambda: self.http.get_tickers(category=self.category))
-        logger.debug(f"Ответ get_tickers: {resp}")
+        logger.debug(f"get_tickers response: {resp}")
 
         if not resp or not isinstance(resp, dict):
-            raise ValueError(f"Пустой или неверный ответ от API get_tickers: {resp}")
+            raise ValueError(f"Empty or invalid response from get_tickers: {resp}")
 
         result = resp.get('result')
         if not result or not isinstance(result, dict) or 'list' not in result or not isinstance(result['list'], list):
-            raise ValueError(f"Неверный формат результата get_tickers: {resp}")
+            raise ValueError(f"Invalid get_tickers result format: {resp}")
 
         for ticker in result['list']:
             sym = ticker.get('symbol', '').upper()
@@ -149,4 +120,4 @@ class BybitClient:
             if sym == symbol.upper() and last_price is not None:
                 return float(last_price)
 
-        raise ValueError(f"Не удалось найти цену для {symbol}")
+        raise ValueError(f"Price not found for {symbol}")
