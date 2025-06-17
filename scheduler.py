@@ -26,6 +26,10 @@ class Scheduler:
         self.client = BybitClient()
         self.tickers = self.load_tickers()
 
+        # Запуск WebSocket и подписка на сделки для расчёта CVD
+        self.client.start_ws()
+        self.client.subscribe_to_trades(self.tickers)
+
     def load_tickers(self):
         with open("tickers.json", "r", encoding="utf-8") as f:
             return json.load(f)
@@ -36,8 +40,7 @@ class Scheduler:
             try:
                 klines = await self.client.get_klines(ticker, TIMEFRAMES[timeframe], limit=50)
 
-                # Указание интервала явно (например, "15min" или "60min")
-                await self.client.update_oi_history(ticker, interval=INTERVAL_MAPPING[timeframe])
+                await self.client.update_oi_history(ticker)
                 oi_delta = self.client.get_oi_delta(ticker)
                 cvd_value = self.client.CVD[ticker]
 
