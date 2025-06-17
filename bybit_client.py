@@ -26,7 +26,7 @@ class BybitClient:
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
         self._connected = False
-        self._ws_task = None  # таск для ws.run()
+        self._ws_task = None  # WebSocket task
 
     # --- CVD JSON persistence ---
 
@@ -120,7 +120,7 @@ class BybitClient:
                 elif side == "Sell":
                     self.CVD[symbol] -= qty
 
-    # --- Добавляем get_current_price ---
+    # --- Получение текущей цены ---
 
     async def get_current_price(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
