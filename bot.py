@@ -1,24 +1,42 @@
-from telegram import Update
-from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
-from dotenv import load_dotenv
-from pybit.unified_trading import HTTP
-import os
 import json
+import asyncio
+from pybit import HTTP
+from aiogram import Bot
 
-load_dotenv()
-bot_token = os.getenv("BOT_TOKEN")
-chat_id = os.getenv("CHAT_ID")
-client = HTTP(testnet=False)
+# Инициализация Telegram бота (вставь свой токен)
+TELEGRAM_TOKEN = "YOUR_TELEGRAM_BOT_TOKEN"
+CHAT_ID = YOUR_TELEGRAM_CHAT_ID  # Чат куда отправлять сообщения
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    with open("tickers.json") as f:
+telegram_bot = Bot(token=TELEGRAM_TOKEN)
+
+# Очередь для входящих данных webhook
+update_queue = asyncio.Queue()
+
+# Инициализация клиента Bybit
+bybit_client = HTTP(endpoint="https://api.bybit.com")
+
+async def send_message(text: str):
+    await telegram_bot.send_message(chat_id=CHAT_ID, text=text)
+
+async def send_start_message():
+    with open("tickers.json", "r") as f:
         tickers = json.load(f)
 
-    msg = "🟢 Бот запущен\n"
+    messages = []
     for ticker in tickers:
-        price = client.get_ticker(category="linear", symbol=ticker)["result"]["list"][0]["lastPrice"]
-        msg += f"{ticker}: {price}\n"
-    await context.bot.send_message(chat_id=chat_id, text=msg)
+        try:
+            resp = bybit_client.latest_information_for_symbol(symbol=ticker)
+            price = resp['result'][0]['last_price']
+            messages.append(f"{ticker}: {price}")
+        except Exception as e:
+            messages.append(f"{ticker}: ошибка получения цены")
 
-app = ApplicationBuilder().token(bot_token).build()
-app.add_handler(CommandHandler("start", start))
+    text = "Бот запущен. Отслеживаемые тикеры и текущие цены:\n" + "\n".join(messages)
+    await send_message(text)
+
+async def process_updates():
+    while True:
+        update = await update_queue.get()
+        # Тут обработка update, например сигналов и команд
+        # Для простоты пропустим реализацию сейчас
+        update_queue.task_done()
