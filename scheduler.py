@@ -2,10 +2,10 @@ import asyncio
 import json
 import logging
 from signals import analyze_signal
-from bybit_client import BybitClient  # ваш класс клиента
+from bybit_client import BybitClient  # твой клиент
 
-logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 class Scheduler:
     def __init__(self, tickers_file="tickers.json"):
@@ -48,7 +48,13 @@ class Scheduler:
             return None
 
     async def run(self):
+        logger.info(f"Тип self.tickers: {type(self.tickers)}, значение: {self.tickers}")
         await self.client.start_ws()
+
+        if not isinstance(self.tickers, list):
+            logger.error(f"tickers is not a list! Got: {self.tickers}")
+            self.tickers = []
+
         self.client.subscribe_to_trades(self.tickers)
 
         while True:
