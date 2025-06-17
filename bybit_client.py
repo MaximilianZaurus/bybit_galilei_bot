@@ -1,10 +1,13 @@
 import os
-from collections import defaultdict
+import json
 import asyncio
 import logging
+from collections import defaultdict
 from pybit.unified_trading import HTTP, WebSocket
 
 logger = logging.getLogger(__name__)
+
+CVD_FILE = "cvd_data.json"
 
 class BybitClient:
     def __init__(self):
@@ -15,8 +18,38 @@ class BybitClient:
         self.http = HTTP(testnet=False, api_key=API_KEY, api_secret=API_SECRET)
         self.ws = WebSocket(testnet=False, channel_type=self.category)
 
-        self.CVD = defaultdict(float)
+        self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
+
+    # --- CVD JSON persistence ---
+
+    def load_cvd_data(self) -> dict:
+        if os.path.exists(CVD_FILE):
+            try:
+                with open(CVD_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    logger.info(f"Загружены CVD из файла: {data}")
+                    return {symbol: float(value) for symbol, value in data.items()}
+            except Exception as e:
+                logger.error(f"Ошибка при загрузке CVD: {e}")
+        return {}
+
+    def save_cvd_data(self):
+        try:
+            with open(CVD_FILE, "w", encoding="utf-8") as f:
+                json.dump(self.CVD, f, ensure_ascii=False, indent=2)
+                logger.debug(f"CVD сохранены в файл: {self.CVD}")
+        except Exception as e:
+            logger.error(f"Ошибка при сохранении CVD: {e}")
+
+    def get_prev_cvd(self, symbol: str) -> float:
+        return self.CVD.get(symbol, 0.0)
+
+    def update_prev_cvd(self, symbol: str, value: float):
+        self.CVD[symbol] = value
+        self.save_cvd_data()
+
+    # --- Основной функционал ---
 
     async def fetch_open_interest(self, symbol: str) -> float:
         loop = asyncio.get_running_loop()
