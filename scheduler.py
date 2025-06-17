@@ -20,13 +20,19 @@ class Scheduler:
         self.scheduler = AsyncIOScheduler()
         self.client = BybitClient()
         self.tickers = self.load_tickers()
+        logger.info(f"Tickers loaded: {self.tickers} (type={type(self.tickers)})")
 
     def load_tickers(self):
         with open("tickers.json", "r", encoding="utf-8") as f:
-            return json.load(f)
+            data = json.load(f)
+            if not isinstance(data, list):
+                raise TypeError(f"Tickers.json должен содержать список, а получено: {type(data)}")
+            return data
 
     async def start_ws_and_subscribe(self):
-        # Подписка с передачей callback уже внутри BybitClient.subscribe_to_trades
+        logger.info(f"Подписка на тикеры: {self.tickers} (type={type(self.tickers)})")
+        if not isinstance(self.tickers, list):
+            raise TypeError(f"Ожидался список тикеров, а получено {type(self.tickers)}")
         self.client.subscribe_to_trades(self.tickers)
         await self.client.start_ws()
 
@@ -72,10 +78,10 @@ class Scheduler:
     def start(self):
         loop = asyncio.get_event_loop()
 
-        # Запускаем WebSocket в фоне, без await, чтоб не блокировать
+        # Запускаем WebSocket подписку как фоновую задачу
         loop.create_task(self.start_ws_and_subscribe())
 
-        # Добавляем задачи с асинхронными вызовами
+        # Планируем задачи анализа с созданием корутин
         self.scheduler.add_job(
             lambda: asyncio.create_task(self.fetch_and_analyze("15m")),
             trigger=CronTrigger(minute="0,15,30,45"),
