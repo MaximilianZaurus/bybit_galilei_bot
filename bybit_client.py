@@ -23,15 +23,19 @@ class BybitClient:
         self.ws.callback = self.handle_message
         self.ws_thread = None
 
-    async def fetch_open_interest(self, symbol: str) -> float:
+    # Добавлен параметр interval с дефолтом "15min"
+    async def fetch_open_interest(self, symbol: str, interval: str = "15min") -> float:
         loop = asyncio.get_running_loop()
-        resp = await loop.run_in_executor(None, lambda: self.http.get_open_interest(symbol=symbol, category=self.category))
+        resp = await loop.run_in_executor(
+            None,
+            lambda: self.http.get_open_interest(symbol=symbol, category=self.category, interval=interval)
+        )
         if resp.get('result') and 'open_interest' in resp['result']:
             return float(resp['result']['open_interest'])
         raise ValueError(f"Ошибка получения open interest для {symbol}: {resp}")
 
-    async def update_oi_history(self, symbol: str):
-        oi = await self.fetch_open_interest(symbol)
+    async def update_oi_history(self, symbol: str, interval: str = "15min"):
+        oi = await self.fetch_open_interest(symbol, interval)
         history = self.OI_HISTORY[symbol]
         history.append(oi)
         if len(history) > 3:
