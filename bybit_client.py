@@ -66,12 +66,12 @@ class BybitClient:
             logger.error("All tickers must be strings")
             raise TypeError("All tickers must be strings")
 
-        topics = [f"trade.{symbol}" for symbol in tickers]
-        logger.info(f"Subscribing to topics: {topics}")
+        topic = [f"trade.{symbol}" for symbol in tickers]
+        logger.info(f"Subscribing to topic: {topic}")
 
         # Подписка одним вызовом на список топиков согласно документации Pybit V5
         self.ws.subscribe(
-            topics=topics,
+            topic=topic,
             callback=self.handle_message
         )
         logger.info("Subscriptions sent")
