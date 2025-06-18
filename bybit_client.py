@@ -64,13 +64,14 @@ class BybitClient:
             logger.error("All tickers must be strings")
             raise TypeError("All tickers must be strings")
 
-        topics = [f"trade.{symbol}" for symbol in tickers]
-        logger.info(f"Subscribing to topic: {topics}")
+        logger.info(f"Subscribing to trade stream for tickers: {tickers}")
 
         self.ws.subscribe(
-            topic=topics,
+            topic="trade",
+            symbol=tickers,
             callback=self.handle_message
         )
+
         logger.info("Subscriptions sent")
 
     def handle_message(self, msg):
@@ -138,6 +139,7 @@ class BybitClient:
         prev_cvd = self.get_prev_cvd(symbol)
 
         oi_delta = self.get_oi_delta(symbol)
+
         prev_close = df['close'].iloc[-2]
 
         signal_result = analyze_signal(
