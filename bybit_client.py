@@ -60,7 +60,7 @@ class BybitClient:
         logger.info(f"Subscribing to trades: {tickers}")
         self.ws.subscribe(
             topic="trade",
-            symbols=tickers,
+            symbol=tickers,
             callback=self.handle_message
         )
         logger.info("Subscriptions sent")
