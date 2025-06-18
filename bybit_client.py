@@ -3,10 +3,8 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from typing import List
-
-import pandas as pd
 from pybit.unified_trading import HTTP, WebSocket
+import pandas as pd
 from signals import analyze_signal
 
 logger = logging.getLogger(__name__)
@@ -29,7 +27,7 @@ class BybitClient:
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
 
-        self.ws.on("trade", self.handle_message)  # Подключаем хендлер
+        # Убрано: self.ws.on("trade", self.handle_message)
 
     def load_cvd_data(self) -> dict:
         if os.path.exists(CVD_FILE):
@@ -60,7 +58,7 @@ class BybitClient:
     async def start_ws(self):
         logger.info("WebSocket in pybit v5 starts automatically.")
 
-    def subscribe_to_trades(self, tickers: List[str]):
+    def subscribe_to_trades(self, tickers):
         if not isinstance(tickers, list):
             logger.error(f"Expected list of tickers, got {type(tickers)}")
             raise TypeError("tickers must be a list")
@@ -69,8 +67,11 @@ class BybitClient:
             raise TypeError("All tickers must be strings")
 
         logger.info(f"Subscribing to trades: {tickers}")
-        for symbol in tickers:
-            self.ws.subscribe("trade", symbol=symbol)
+        self.ws.subscribe(
+            topic="trade",
+            symbol=tickers,
+            callback=self.handle_message
+        )
         logger.info("Subscriptions sent")
 
     def handle_message(self, msg):
@@ -131,18 +132,14 @@ class BybitClient:
         df = df.sort_values('start').reset_index(drop=True)
         return df
 
-    def get_oi_delta(self, symbol: str) -> float:
-        history = self.OI_HISTORY.get(symbol, [])
-        if len(history) < 2:
-            return 0.0
-        return history[-1] - history[-2]
-
     async def analyze_symbol(self, symbol: str, timeframe: str = "15m") -> dict:
         df = await self.get_klines(symbol, timeframe, limit=10)
 
         current_cvd = self.CVD.get(symbol, 0.0)
         prev_cvd = self.get_prev_cvd(symbol)
+
         oi_delta = self.get_oi_delta(symbol)
+
         prev_close = df['close'].iloc[-2]
 
         signal_result = analyze_signal(
@@ -154,3 +151,9 @@ class BybitClient:
         )
 
         return signal_result
+
+    def get_oi_delta(self, symbol: str) -> float:
+        # Предполагается, что логика получения delta Open Interest реализована
+        if symbol not in self.OI_HISTORY or len(self.OI_HISTORY[symbol]) < 2:
+            return 0.0
+        return self.OI_HISTORY[symbol][-1] - self.OI_HISTORY[symbol][-2]
