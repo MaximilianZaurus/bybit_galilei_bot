@@ -27,8 +27,6 @@ class BybitClient:
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
 
-        # Убрано: self.ws.on("trade", self.handle_message)
-
     def load_cvd_data(self) -> dict:
         if os.path.exists(CVD_FILE):
             try:
@@ -66,12 +64,11 @@ class BybitClient:
             logger.error("All tickers must be strings")
             raise TypeError("All tickers must be strings")
 
-        topic = [f"trade.{symbol}" for symbol in tickers]
-        logger.info(f"Subscribing to topic: {topic}")
+        topics = [f"trade.{symbol}" for symbol in tickers]
+        logger.info(f"Subscribing to topic: {topics}")
 
-        # Подписка одним вызовом на список топиков согласно документации Pybit V5
         self.ws.subscribe(
-            topic=topic,
+            topic=topics,
             callback=self.handle_message
         )
         logger.info("Subscriptions sent")
@@ -141,7 +138,6 @@ class BybitClient:
         prev_cvd = self.get_prev_cvd(symbol)
 
         oi_delta = self.get_oi_delta(symbol)
-
         prev_close = df['close'].iloc[-2]
 
         signal_result = analyze_signal(
@@ -155,7 +151,6 @@ class BybitClient:
         return signal_result
 
     def get_oi_delta(self, symbol: str) -> float:
-        # Предполагается, что логика получения delta Open Interest реализована
         if symbol not in self.OI_HISTORY or len(self.OI_HISTORY[symbol]) < 2:
             return 0.0
         return self.OI_HISTORY[symbol][-1] - self.OI_HISTORY[symbol][-2]
