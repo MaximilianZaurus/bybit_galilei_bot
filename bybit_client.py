@@ -58,8 +58,11 @@ class BybitClient:
             raise TypeError("All tickers must be strings")
 
         logger.info(f"Subscribing to trades: {tickers}")
-        for ticker in tickers:
-            self.ws.subscribe(self.handle_message, "trade", ticker)
+        self.ws.subscribe(
+            topic="trade",
+            symbols=tickers,
+            callback=self.handle_message
+        )
         logger.info("Subscriptions sent")
 
     def handle_message(self, msg):
