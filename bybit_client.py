@@ -64,11 +64,11 @@ class BybitClient:
             logger.error("All tickers must be strings")
             raise TypeError("All tickers must be strings")
 
-        logger.info(f"Subscribing to trade stream for tickers: {tickers}")
+        topics = [f"trade.{symbol}" for symbol in tickers]
+        logger.info(f"Subscribing to topic: {topics}")
 
         self.ws.subscribe(
-            topic="trade",
-            symbol=tickers,
+            topic=topics,
             callback=self.handle_message
         )
 
@@ -125,8 +125,13 @@ class BybitClient:
         if not resp or 'result' not in resp or not resp['result']:
             raise ValueError(f"Empty kline response for {symbol}")
 
-        data = resp['result']
-        df = pd.DataFrame(data)
+        data = resp['result'].get('list', [])
+        if not data:
+            raise ValueError(f"No kline data returned for {symbol}")
+
+        df = pd.DataFrame(data, columns=[
+            "start", "open", "high", "low", "close", "volume", "turnover"
+        ])
         for col in ['open', 'high', 'low', 'close', 'volume']:
             df[col] = df[col].astype(float)
         df = df.sort_values('start').reset_index(drop=True)
