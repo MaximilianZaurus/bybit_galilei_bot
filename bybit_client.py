@@ -3,10 +3,19 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
+from typing import List
+
+import pandas as pd
 from pybit.unified_trading import HTTP, WebSocket
+from signals import analyze_signal
 
 logger = logging.getLogger(__name__)
 CVD_FILE = "cvd_data.json"
+
+TIMEFRAMES = {
+    "15m": "15",
+    "1h": "60"
+}
 
 class BybitClient:
     def __init__(self):
@@ -19,6 +28,8 @@ class BybitClient:
 
         self.CVD = defaultdict(float, self.load_cvd_data())
         self.OI_HISTORY = defaultdict(list)
+
+        self.ws.on("trade", self.handle_message)  # Подключаем хендлер
 
     def load_cvd_data(self) -> dict:
         if os.path.exists(CVD_FILE):
@@ -49,7 +60,7 @@ class BybitClient:
     async def start_ws(self):
         logger.info("WebSocket in pybit v5 starts automatically.")
 
-    def subscribe_to_trades(self, tickers):
+    def subscribe_to_trades(self, tickers: List[str]):
         if not isinstance(tickers, list):
             logger.error(f"Expected list of tickers, got {type(tickers)}")
             raise TypeError("tickers must be a list")
@@ -58,11 +69,8 @@ class BybitClient:
             raise TypeError("All tickers must be strings")
 
         logger.info(f"Subscribing to trades: {tickers}")
-        self.ws.subscribe(
-            topic="trade",
-            symbol=tickers,
-            callback=self.handle_message
-        )
+        for symbol in tickers:
+            self.ws.subscribe("trade", symbol=symbol)
         logger.info("Subscriptions sent")
 
     def handle_message(self, msg):
@@ -97,3 +105,52 @@ class BybitClient:
                 return float(last_price)
 
         raise ValueError(f"Price not found for {symbol}")
+
+    async def get_klines(self, symbol: str, timeframe: str, limit: int = 10) -> pd.DataFrame:
+        tf = TIMEFRAMES.get(timeframe)
+        if tf is None:
+            raise ValueError(f"Unsupported timeframe {timeframe}")
+
+        loop = asyncio.get_running_loop()
+        resp = await loop.run_in_executor(
+            None,
+            lambda: self.http.get_kline(
+                symbol=symbol,
+                interval=tf,
+                limit=limit,
+                category=self.category
+            )
+        )
+        if not resp or 'result' not in resp or not resp['result']:
+            raise ValueError(f"Empty kline response for {symbol}")
+
+        data = resp['result']
+        df = pd.DataFrame(data)
+        for col in ['open', 'high', 'low', 'close', 'volume']:
+            df[col] = df[col].astype(float)
+        df = df.sort_values('start').reset_index(drop=True)
+        return df
+
+    def get_oi_delta(self, symbol: str) -> float:
+        history = self.OI_HISTORY.get(symbol, [])
+        if len(history) < 2:
+            return 0.0
+        return history[-1] - history[-2]
+
+    async def analyze_symbol(self, symbol: str, timeframe: str = "15m") -> dict:
+        df = await self.get_klines(symbol, timeframe, limit=10)
+
+        current_cvd = self.CVD.get(symbol, 0.0)
+        prev_cvd = self.get_prev_cvd(symbol)
+        oi_delta = self.get_oi_delta(symbol)
+        prev_close = df['close'].iloc[-2]
+
+        signal_result = analyze_signal(
+            df,
+            cvd=current_cvd,
+            oi_delta=oi_delta,
+            prev_close=prev_close,
+            prev_cvd=prev_cvd
+        )
+
+        return signal_result
