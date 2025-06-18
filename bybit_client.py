@@ -71,6 +71,7 @@ class BybitClient:
             topic_name = f"trade.{symbol}"
             self.ws.subscribe(
                 topic=topic_name,
+                symbol=symbol,         # <--- Вот это добавлено
                 callback=self.handle_message
             )
         logger.info("Subscriptions sent")
